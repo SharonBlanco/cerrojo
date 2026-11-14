@@ -41,7 +41,9 @@ jobs:
       - name: Prueba rápida (sin ventana)
         run: dist/Cerrojo-${{ matrix.arch }}.AppImage --appimage-extract-and-run apk com.ejemplo.prueba /tmp/p.apk && test -s /tmp/p.apk
       - uses: actions/upload-artifact@v4
-        with: { name: linux-${{ matrix.arch }}, path: dist/* }
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/*
 
   windows:
     runs-on: windows-latest
@@ -77,7 +79,9 @@ jobs:
           ./$D/Cerrojo.exe apk com.ejemplo.prueba p.apk && test -s p.apk
           mkdir -p dist && zip -qr dist/Cerrojo-windows-x86_64.zip $D
       - uses: actions/upload-artifact@v4
-        with: { name: windows, path: dist/* }
+        with:
+          name: windows
+          path: dist/*
 
   macos:
     runs-on: macos-14
@@ -104,7 +108,9 @@ jobs:
           $APP/Contents/MacOS/cerrojo apk com.ejemplo.prueba /tmp/p.apk && test -s /tmp/p.apk
           mkdir -p dist && ditto -c -k --keepParent $APP dist/Cerrojo-macos-arm64.zip
       - uses: actions/upload-artifact@v4
-        with: { name: macos, path: dist/* }
+        with:
+          name: macos
+          path: dist/*
 
   release:
     needs: [linux, windows, macos]
@@ -115,7 +121,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { path: dist, merge-multiple: true }
+        with:
+          path: dist
+          merge-multiple: true
       - run: cd dist && sha256sum * > SHA256SUMS && ls -l
       - env:
           GH_TOKEN: ${{ github.token }}
