@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 440" width="1280" height="440">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#171B2B"/><stop offset="1" stop-color="#0C0E16"/>
+    </linearGradient>
+    <radialGradient id="g1" cx="0.18" cy="0.3" r="0.45"><stop offset="0" stop-color="#00C3E3" stop-opacity="0.45"/><stop offset="1" stop-color="#00C3E3" stop-opacity="0"/></radialGradient>
+    <radialGradient id="g2" cx="0.85" cy="0.85" r="0.5"><stop offset="0" stop-color="#9D52FA" stop-opacity="0.35"/><stop offset="1" stop-color="#9D52FA" stop-opacity="0"/></radialGradient>
+    <radialGradient id="g3" cx="0.95" cy="0.1" r="0.35"><stop offset="0" stop-color="#FF4554" stop-opacity="0.22"/><stop offset="1" stop-color="#FF4554" stop-opacity="0"/></radialGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#22D3EE"/><stop offset="1" stop-color="#0093B0"/></linearGradient>
+  </defs>
+  <rect width="1280" height="440" rx="32" fill="url(#bg)"/>
+  <rect width="1280" height="440" rx="32" fill="url(#g1)"/>
+  <rect width="1280" height="440" rx="32" fill="url(#g2)"/>
+  <rect width="1280" height="440" rx="32" fill="url(#g3)"/>
+  <g transform="translate(110 92) scale(0.5)">
+    <rect x="16" y="16" width="480" height="480" rx="112" fill="#1E2334" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="3"/>
+    <path d="M176 238V176a80 80 0 0 1 160 0v62" fill="none" stroke="#E9EEF5" stroke-width="40" stroke-linecap="round"/>
+    <rect x="120" y="214" width="272" height="216" rx="52" fill="url(#body)"/>
+    <path d="M232 280 L232 364 L304 322 Z" fill="#0B2A33" stroke="#0B2A33" stroke-width="16" stroke-linejoin="round"/>
+  </g>
+  <g font-family="Inter, Cantarell, 'Noto Sans', sans-serif" fill="#F4F5F8">
+    <text x="420" y="178" font-size="88" font-weight="800" letter-spacing="-1">Cerrojo</text>
+    <text x="424" y="238" font-size="38" font-weight="600" fill="#7FE6F5">Los reels, bajo llave.</text>
+    <text x="424" y="296" font-size="24" fill="#C9CEDA">TikTok, Shorts, Reels y compañía fuera de tu Android.</text>
+    <text x="424" y="330" font-size="24" fill="#C9CEDA">Ni la Play Store puede reinstalarlos. Solo tu PC tiene la llave.</text>
+  </g>
+</svg>

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Cerrojo
+GenericName=Bloqueo de reels
+Comment=Bloquea en el celular las apps de reels y video vertical; solo este PC las desbloquea
+Exec=cerrojo
+Icon=dev.cerrojo
+Categories=Utility;
+Keywords=reels;tiktok;shorts;bloquear;adb;android;
+StartupWMClass=dev.cerrojo

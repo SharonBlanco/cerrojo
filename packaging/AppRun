@@ -1,0 +1,5 @@
+#!/bin/sh
+# Lanzador de la AppImage de Cerrojo: sin argumentos abre la ventana; con
+# argumentos (estado, bloquear…) funciona como orden de terminal.
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/bin/cerrojo" "$@"
