@@ -16,7 +16,7 @@ jobs:
           - { arch: aarch64, os: ubuntu-24.04-arm }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgtk-4-dev patchelf desktop-file-utils file
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release --locked
@@ -33,14 +33,14 @@ jobs:
           install -Dm644 packaging/cerrojo.svg "$APPDIR/usr/share/icons/hicolor/scalable/apps/dev.cerrojo.svg"
           install -Dm644 packaging/cerrojo-256.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/dev.cerrojo.png"
           cp packaging/cerrojo.svg "$APPDIR/dev.cerrojo.svg"
-          ln -s dev.cerrojo.svg "$APPDIR/.DirIcon"
+          cp packaging/cerrojo-256.png "$APPDIR/.DirIcon"
           sed "\$a X-AppImage-Version=$VERSION" packaging/cerrojo.desktop > "$APPDIR/dev.cerrojo.desktop"
           desktop-file-validate "$APPDIR/dev.cerrojo.desktop"
           mkdir -p dist
           APPIMAGE_EXTRACT_AND_RUN=1 ARCH=${{ matrix.arch }} ./appimagetool --no-appstream "$APPDIR" dist/Cerrojo-${{ matrix.arch }}.AppImage
       - name: Prueba rápida (sin ventana)
         run: dist/Cerrojo-${{ matrix.arch }}.AppImage --appimage-extract-and-run apk com.ejemplo.prueba /tmp/p.apk && test -s /tmp/p.apk
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: linux-${{ matrix.arch }}
           path: dist/*
@@ -51,7 +51,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
@@ -78,15 +78,15 @@ jobs:
           printf 'Cerrojo\r\n\r\nAbre Cerrojo.exe.\r\nNecesitas adb: en PowerShell, winget install Google.PlatformTools\r\nGuia completa: https://github.com/sthifen/cerrojo\r\n' > $D/LEEME.txt
           ./$D/Cerrojo.exe apk com.ejemplo.prueba p.apk && test -s p.apk
           mkdir -p dist && zip -qr dist/Cerrojo-windows-x86_64.zip $D
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: windows
           path: dist/*
 
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: brew install gtk4 dylibbundler
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release --locked
@@ -107,7 +107,7 @@ jobs:
           codesign --force --deep -s - $APP
           $APP/Contents/MacOS/cerrojo apk com.ejemplo.prueba /tmp/p.apk && test -s /tmp/p.apk
           mkdir -p dist && ditto -c -k --keepParent $APP dist/Cerrojo-macos-arm64.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: macos
           path: dist/*
@@ -119,8 +119,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true
