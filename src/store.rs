@@ -9,6 +9,8 @@ use crate::catalog::config_dir;
 #[derive(Default)]
 pub struct Store {
     pub wanted: BTreeMap<String, BTreeSet<String>>,
+    /// Equipos en los que apagaste el filtro web (~/.config/cerrojo/web.json).
+    pub web_off: BTreeSet<String>,
 }
 
 impl Store {
@@ -17,7 +19,11 @@ impl Store {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
-        Store { wanted }
+        let web_off = std::fs::read(config_dir().join("web.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        Store { wanted, web_off }
     }
 
     pub fn save(&self) {
@@ -25,6 +31,23 @@ impl Store {
         if let Ok(b) = serde_json::to_vec_pretty(&self.wanted) {
             let _ = std::fs::write(config_dir().join("equipos.json"), b);
         }
+        if let Ok(b) = serde_json::to_vec_pretty(&self.web_off) {
+            let _ = std::fs::write(config_dir().join("web.json"), b);
+        }
+    }
+
+    /// Encender o apagar el filtro web en este equipo.
+    pub fn set_web(&mut self, serial: &str, on: bool) {
+        if on {
+            self.web_off.remove(serial);
+        } else {
+            self.web_off.insert(serial.to_string());
+        }
+        self.save();
+    }
+
+    pub fn web_enabled(&self, serial: &str) -> bool {
+        !self.web_off.contains(serial)
     }
 
     pub fn set(&mut self, serial: &str, app: &str, on: bool) {
@@ -47,6 +70,9 @@ impl Store {
     /// que quieres bloqueadas y, si hay alguno, los DNS cifrados que servirían
     /// para saltarse el filtro.
     pub fn web_domains(&self, serial: &str) -> Vec<String> {
+        if !self.web_enabled(serial) {
+            return Vec::new();
+        }
         let mut out: Vec<String> = crate::catalog::all()
             .into_iter()
             .filter(|a| self.wants(serial, &a.name))

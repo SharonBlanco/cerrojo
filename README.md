@@ -35,7 +35,8 @@ la Play Store, ni desde otra tienda, ni con un APK descargado. La llave se queda
 - 🎯 **Un toque, todo listo.** YouTube, YouTube Music, TikTok (y Lite), Instagram (y Lite), Threads, Facebook (y Lite),
   Snapchat, Pinterest, Kwai, Likee, Snaptube y los YouTube parcheados (ReVanced, Morphe).
 - 🌐 **También sus páginas web.** Al bloquear Instagram, TikTok, Facebook, Threads… sus sitios dejan de abrir en
-  cualquier navegador del celular. WhatsApp, LinkedIn y YouTube web siguen funcionando.
+  cualquier navegador del celular. WhatsApp, LinkedIn y YouTube web siguen funcionando. Se apaga y se enciende con
+  su propio interruptor, *Páginas web*.
 - ➕ **Cualquier otra app** se añade escribiendo su nombre de paquete.
 - 📱 **Varios equipos**: el celular, la tablet, el de tu hermano… cada uno recuerda su lista.
 - 🪶 **Nada que hacer en el celular.** Todo va por `adb`, la herramienta oficial de Android: sin cuentas, sin
@@ -161,6 +162,7 @@ cerrojo estado                      # qué está bloqueado
 cerrojo bloquear com.zhiliaoapp.musically
 cerrojo desbloquear com.pinterest
 cerrojo web                         # pone o quita el filtro web según lo bloqueado
+cerrojo web apagar                  # lo desactiva en este equipo (encender lo vuelve a poner)
 cerrojo bloquear PAQUETE -s SERIAL  # con varios equipos conectados
 ```
 

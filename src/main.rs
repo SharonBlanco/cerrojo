@@ -6,6 +6,7 @@
 //!   cerrojo bloquear PAQUETE... [-s SERIAL]
 //!   cerrojo desbloquear PAQUETE... [-s SERIAL]
 //!   cerrojo web [SERIAL]            (pone el filtro web como en la ventana)
+//!   cerrojo web apagar|encender [-s SERIAL]
 //!   cerrojo apk PAQUETE ARCHIVO     (solo genera el candado)
 
 // En Windows, sin consola al abrir la ventana; desde una terminal se engancha
@@ -71,7 +72,12 @@ fn main() -> Result<()> {
             }
         }
         "web" => {
-            let serial = pick(serial.or(rest.first().cloned()))?;
+            let action = rest.iter().find(|a| *a == "apagar" || *a == "encender").cloned();
+            let serial = pick(serial.or(rest.iter().find(|a| Some(*a) != action.as_ref()).cloned()))?;
+            if let Some(a) = action {
+                let mut st = store::Store::load();
+                st.set_web(&serial, a == "encender");
+            }
             let n = store::sync_web(&serial)?;
             // La VPN tarda un instante en levantarse.
             std::thread::sleep(std::time::Duration::from_millis(3500));

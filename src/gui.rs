@@ -101,6 +101,11 @@ window.cerrojo.csd { border-radius: 0; box-shadow: none; }
 .glass, .frost, .confirm { border-radius: 0; }
 "#;
 
+const APP_WHY: &str =
+    "Se podrá volver a instalar desde la Play Store. Si lo haces por un rato, acuérdate de bloquearla después.";
+const WEB_WHY: &str = "Instagram, TikTok, Facebook… volverán a abrir en el navegador del celular. \
+     Si lo haces por un rato, acuérdate de activarlo después.";
+
 // ---- Mensajes entre la ventana y el hilo de adb ----
 
 enum Job {
@@ -116,6 +121,7 @@ enum Msg {
     States(String, HashMap<String, PkgState>),
     Busy(String, String),
     Done(String, String),
+    Web(String, device::WebState),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -154,10 +160,20 @@ fn worker(jobs: mpsc::Receiver<Job>, tx: mpsc::Sender<Msg>) {
         if let Err(e) = crate::store::sync_web(serial) {
             errors.push(format!("filtro web: {e:#}"));
         }
+        // La VPN tarda un instante en levantarse.
+        std::thread::sleep(Duration::from_millis(2500));
+        if let Ok(w) = device::web_state(serial) {
+            let _ = tx.send(Msg::Web(serial.to_string(), w));
+        }
     };
     while let Ok(job) = jobs.recv() {
         match job {
-            Job::Refresh(serial) => refresh(&serial),
+            Job::Refresh(serial) => {
+                refresh(&serial);
+                if let Ok(w) = device::web_state(&serial) {
+                    let _ = tx.send(Msg::Web(serial, w));
+                }
+            }
             Job::Web(serial) => {
                 let mut errors = Vec::new();
                 web(&serial, &mut errors);
@@ -247,6 +263,8 @@ struct Ui {
     foot: gtk::Label,
     confirm: gtk::Box,
     confirm_text: gtk::Label,
+    confirm_why: gtk::Label,
+    confirm_go: gtk::Button,
 }
 
 struct State {
@@ -263,6 +281,10 @@ struct State {
     checked: HashSet<String>,
     rows: Vec<Row>,
     pending_unblock: Option<App>,
+    /// Se está confirmando apagar el filtro web.
+    pending_web: bool,
+    web: HashMap<String, device::WebState>,
+    web_row: Option<(gtk::Label, gtk::Switch)>,
     tint: Option<(f64, f64, f64)>,
 }
 
@@ -326,6 +348,9 @@ fn build(app: &gtk::Application) {
         checked: HashSet::new(),
         rows: Vec::new(),
         pending_unblock: None,
+        pending_web: false,
+        web: HashMap::new(),
+        web_row: None,
         tint: None,
     }));
 
@@ -481,8 +506,11 @@ fn build(app: &gtk::Application) {
             for a in catalog::all() {
                 s.store.set(&serial, &a.name, true);
             }
+            s.store.set_web(&serial, true);
             if !apps.is_empty() {
                 let _ = s.jobs.send(Job::Block { serial, apps, auto: false });
+            } else {
+                let _ = s.jobs.send(Job::Web(serial));
             }
         });
     }
@@ -543,9 +571,7 @@ fn build(app: &gtk::Application) {
     confirm_text.set_wrap(true);
     confirm_text.set_max_width_chars(34);
     card.append(&confirm_text);
-    let why = gtk::Label::new(Some(
-        "Se podrá volver a instalar desde la Play Store. Si lo haces por un rato, acuérdate de bloquearla después.",
-    ));
+    let why = gtk::Label::new(Some(APP_WHY));
     why.add_css_class("sub");
     why.set_wrap(true);
     why.set_max_width_chars(46);
@@ -581,12 +607,17 @@ fn build(app: &gtk::Application) {
         foot,
         confirm,
         confirm_text,
+        confirm_why: why,
+        confirm_go: go.clone(),
     });
 
     {
         let (state, ui) = (state.clone(), ui.clone());
         keep.connect_clicked(move |_| {
-            state.borrow_mut().pending_unblock = None;
+            let mut s = state.borrow_mut();
+            s.pending_unblock = None;
+            s.pending_web = false;
+            drop(s);
             ui.confirm.set_visible(false);
             render(&ui, &state);
         });
@@ -596,6 +627,12 @@ fn build(app: &gtk::Application) {
         go.connect_clicked(move |_| {
             let mut s = state.borrow_mut();
             ui.confirm.set_visible(false);
+            if std::mem::take(&mut s.pending_web) {
+                let Some(serial) = s.current.clone() else { return };
+                s.store.set_web(&serial, false);
+                let _ = s.jobs.send(Job::Web(serial));
+                return;
+            }
             let (Some(app), Some(serial)) = (s.pending_unblock.take(), s.current.clone()) else { return };
             s.store.set(&serial, &app.name, false);
             let _ = s.jobs.send(Job::Unblock { serial, app });
@@ -710,6 +747,9 @@ fn on_msg(s: &mut State, msg: Msg) {
                 s.busy = Some(text);
             }
         }
+        Msg::Web(serial, w) => {
+            s.web.insert(serial, w);
+        }
         Msg::Done(serial, text) => {
             if s.current.as_deref() == Some(&serial) {
                 s.busy = None;
@@ -722,6 +762,54 @@ fn on_msg(s: &mut State, msg: Msg) {
 fn rebuild_rows(ui: &Rc<Ui>, state: &Rc<RefCell<State>>) {
     while let Some(c) = ui.list.first_child() {
         ui.list.remove(&c);
+    }
+    // Primera fila: el filtro web, que no es una app.
+    {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        row.add_css_class("row");
+        let text = gtk::Box::new(gtk::Orientation::Vertical, 1);
+        text.set_hexpand(true);
+        text.set_valign(gtk::Align::Center);
+        let name = gtk::Label::new(Some("Páginas web"));
+        name.add_css_class("row-name");
+        name.set_xalign(0.0);
+        text.append(&name);
+        let hint = gtk::Label::new(Some("Los sitios de las apps bloqueadas, en cualquier navegador"));
+        hint.add_css_class("row-hint");
+        hint.set_xalign(0.0);
+        text.append(&hint);
+        row.append(&text);
+        let chip = gtk::Label::new(None);
+        chip.add_css_class("chip");
+        chip.set_valign(gtk::Align::Center);
+        row.append(&chip);
+        let switch = gtk::Switch::new();
+        switch.set_valign(gtk::Align::Center);
+        {
+            let (state, ui) = (state.clone(), ui.clone());
+            switch.connect_state_set(move |sw, on| {
+                if sw.widget_name() == "sync" {
+                    return glib::Propagation::Proceed;
+                }
+                let mut s = state.borrow_mut();
+                let Some(serial) = s.current.clone() else { return glib::Propagation::Stop };
+                if on {
+                    s.store.set_web(&serial, true);
+                    let _ = s.jobs.send(Job::Web(serial));
+                    glib::Propagation::Proceed
+                } else {
+                    s.pending_web = true;
+                    ui.confirm_text.set_text("¿Desactivar el bloqueo de páginas web?");
+                    ui.confirm_why.set_text(WEB_WHY);
+                    ui.confirm_go.set_label("Desactivar");
+                    ui.confirm.set_visible(true);
+                    glib::Propagation::Stop
+                }
+            });
+        }
+        row.append(&switch);
+        ui.list.append(&row);
+        state.borrow_mut().web_row = Some((chip, switch));
     }
     let mut rows = Vec::new();
     for app in catalog::all() {
@@ -762,6 +850,8 @@ fn rebuild_rows(ui: &Rc<Ui>, state: &Rc<RefCell<State>>) {
                 } else {
                     s.pending_unblock = Some(app.clone());
                     ui.confirm_text.set_text(&format!("¿Desbloquear {}?", app.name));
+                    ui.confirm_why.set_text(APP_WHY);
+                    ui.confirm_go.set_label("Desbloquear");
                     ui.confirm.set_visible(true);
                     glib::Propagation::Stop
                 }
@@ -874,6 +964,26 @@ fn render(ui: &Rc<Ui>, state: &Rc<RefCell<State>>) {
             row.switch.set_widget_name("");
         }
         row.switch.set_sensitive(busy.is_none() && st.is_some());
+    }
+    if let Some((chip, switch)) = &s.web_row {
+        let w = s.web.get(&device.serial).copied();
+        let wanted = s.store.web_enabled(&device.serial) && !s.store.web_domains(&device.serial).is_empty();
+        let (text, class) = match w {
+            Some(device::WebState::On) => ("Activo", "blocked"),
+            Some(device::WebState::Off | device::WebState::Absent) if wanted => ("Quitado", "live"),
+            Some(_) => ("Apagado", ""),
+            None => ("…", ""),
+        };
+        chip.set_text(text);
+        set_classes(chip, class, &["blocked", "live"]);
+        let on = s.store.web_enabled(&device.serial);
+        if switch.is_active() != on || switch.state() != on {
+            switch.set_widget_name("sync");
+            switch.set_state(on);
+            switch.set_active(on);
+            switch.set_widget_name("");
+        }
+        switch.set_sensitive(busy.is_none() && w.is_some());
     }
     let total = s.rows.len();
     ui.count.set_text(&format!("{blocked} de {total} bloqueadas"));
