@@ -270,3 +270,111 @@ pub fn unblock(serial: &str, package: &str) -> Result<()> {
     }
     Ok(())
 }
+
+// ---- Filtro web ----
+//
+// Una VPN local (android/) que solo ve el DNS y responde "no existe" a los
+// dominios de las apps bloqueadas. Todo por adb, sin tocar el celular:
+// - appops ACTIVATE_VPN: el permiso de VPN sin el diálogo de "¿confías?".
+// - deviceidle whitelist: que el ahorro de batería no la duerma.
+// - always_on_vpn_app: Android la vuelve a encender al reiniciar.
+// - DNS privado apagado: si no, el celular preguntaría por fuera del túnel.
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebState {
+    /// No está instalado.
+    Absent,
+    /// Instalado pero sin la VPN puesta (la quitaste en Ajustes, por ejemplo).
+    Off,
+    On,
+}
+
+pub fn web_state(serial: &str) -> Result<WebState> {
+    let p = apk::FILTER_PKG;
+    let out = shell(
+        serial,
+        &format!(
+            "pm path {p}; echo @@; dumpsys package {p} | grep -m1 versionCode=; echo @@; \
+             dumpsys connectivity | grep -c '10.111.222.2/32'"
+        ),
+    )?;
+    let parts: Vec<&str> = out.split("@@").collect();
+    if parts.len() < 3 || !parts[0].contains("package:") {
+        return Ok(WebState::Absent);
+    }
+    let version: u32 = parts[1]
+        .split("versionCode=")
+        .nth(1)
+        .and_then(|v| v.split_whitespace().next())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if version < apk::FILTER_VERSION {
+        return Ok(WebState::Absent);
+    }
+    let vpn = parts[2].trim().lines().last().and_then(|n| n.trim().parse::<u32>().ok()).unwrap_or(0);
+    Ok(if vpn > 0 { WebState::On } else { WebState::Off })
+}
+
+fn install_filter(serial: &str) -> Result<()> {
+    let bytes = apk::build_filter()?;
+    let path = std::env::temp_dir().join(format!("cerrojo-{}-filtro.apk", std::process::id()));
+    std::fs::File::create(&path)?.write_all(&bytes)?;
+    let install = || adb().arg("-s").arg(serial).arg("install").arg("-r").arg(&path).stdin(Stdio::null()).output();
+    let mut out = install()?;
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    if text.contains("INSTALL_FAILED_UPDATE_INCOMPATIBLE") {
+        // Lo puso Cerrojo desde otro PC (otra firma): se cambia por el nuestro.
+        shell(serial, &format!("pm uninstall {}", apk::FILTER_PKG))?;
+        out = install()?;
+        text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    }
+    let _ = std::fs::remove_file(&path);
+    if !out.status.success() || !text.contains("Success") {
+        bail!("no se pudo instalar el filtro web: {}", text.trim());
+    }
+    Ok(())
+}
+
+/// Pone (o actualiza) el filtro con estos dominios.
+pub fn web_on(serial: &str, domains: &[String]) -> Result<()> {
+    let p = apk::FILTER_PKG;
+    if web_state(serial)? == WebState::Absent {
+        install_filter(serial)?;
+    }
+    let list: Vec<&str> = domains
+        .iter()
+        .map(String::as_str)
+        .filter(|d| d.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '!' | '*')))
+        .collect();
+    let out = shell(
+        serial,
+        &format!(
+            "appops set {p} ACTIVATE_VPN allow; cmd deviceidle whitelist +{p} >/dev/null; \
+             settings put global private_dns_mode off; settings put secure always_on_vpn_app {p}; \
+             am start -n {p}/.Orden --es dominios '{}'",
+            list.join(" ")
+        ),
+    )?;
+    if out.contains("Error") || out.contains("Exception") {
+        bail!("no se pudo encender el filtro web: {}", out.trim());
+    }
+    Ok(())
+}
+
+/// Quita el filtro del todo.
+pub fn web_off(serial: &str) -> Result<()> {
+    let p = apk::FILTER_PKG;
+    if !shell(serial, &format!("pm path {p}"))?.contains("package:") {
+        return Ok(());
+    }
+    shell(
+        serial,
+        &format!(
+            "am start -n {p}/.Orden --ez apagar true; \
+             [ \"$(settings get secure always_on_vpn_app)\" = {p} ] && settings delete secure always_on_vpn_app; \
+             settings put global private_dns_mode opportunistic; cmd deviceidle whitelist -{p} >/dev/null; \
+             sleep 1; pm uninstall {p}"
+        ),
+    )?;
+    Ok(())
+}

@@ -41,3 +41,34 @@ impl Store {
         self.wanted.get(serial).is_some_and(|s| s.contains(app))
     }
 }
+
+impl Store {
+    /// Los dominios que deben estar bloqueados en este equipo: los de las apps
+    /// que quieres bloqueadas y, si hay alguno, los DNS cifrados que servirían
+    /// para saltarse el filtro.
+    pub fn web_domains(&self, serial: &str) -> Vec<String> {
+        let mut out: Vec<String> = crate::catalog::all()
+            .into_iter()
+            .filter(|a| self.wants(serial, &a.name))
+            .flat_map(|a| a.domains)
+            .collect();
+        if out.iter().any(|d| !d.starts_with('!')) {
+            out.extend(crate::catalog::BYPASS.iter().map(|d| d.to_string()));
+        } else {
+            out.clear();
+        }
+        out
+    }
+}
+
+/// Deja el filtro web como dice equipos.json: puesto con esos dominios, o
+/// quitado si no queda nada por bloquear. Devuelve cuántos dominios quedan.
+pub fn sync_web(serial: &str) -> anyhow::Result<usize> {
+    let domains = Store::load().web_domains(serial);
+    if domains.is_empty() {
+        crate::device::web_off(serial)?;
+    } else {
+        crate::device::web_on(serial, &domains)?;
+    }
+    Ok(domains.iter().filter(|d| !d.starts_with('!')).count())
+}

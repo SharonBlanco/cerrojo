@@ -107,6 +107,8 @@ enum Job {
     Refresh(String),
     Block { serial: String, apps: Vec<App>, auto: bool },
     Unblock { serial: String, app: App },
+    /// Poner el filtro web como dice equipos.json.
+    Web(String),
 }
 
 enum Msg {
@@ -147,9 +149,20 @@ fn worker(jobs: mpsc::Receiver<Job>, tx: mpsc::Sender<Msg>) {
             }
         }
     };
+    let web = |serial: &str, errors: &mut Vec<String>| {
+        let _ = tx.send(Msg::Busy(serial.to_string(), "Bloqueando sus páginas web…".into()));
+        if let Err(e) = crate::store::sync_web(serial) {
+            errors.push(format!("filtro web: {e:#}"));
+        }
+    };
     while let Ok(job) = jobs.recv() {
         match job {
             Job::Refresh(serial) => refresh(&serial),
+            Job::Web(serial) => {
+                let mut errors = Vec::new();
+                web(&serial, &mut errors);
+                let _ = tx.send(Msg::Done(serial, errors.first().map(|e| format!("Falló: {e}")).unwrap_or_default()));
+            }
             Job::Block { serial, apps, auto } => {
                 let mut errors = Vec::new();
                 for app in &apps {
@@ -160,6 +173,7 @@ fn worker(jobs: mpsc::Receiver<Job>, tx: mpsc::Sender<Msg>) {
                         }
                     }
                 }
+                web(&serial, &mut errors);
                 let text = if !errors.is_empty() {
                     format!("Falló: {}", errors.join("; "))
                 } else if auto {
@@ -179,6 +193,7 @@ fn worker(jobs: mpsc::Receiver<Job>, tx: mpsc::Sender<Msg>) {
                         errors.push(format!("{p}: {e}"));
                     }
                 }
+                web(&serial, &mut errors);
                 refresh(&serial);
                 let text = if errors.is_empty() {
                     format!("{} desbloqueada: ya se puede instalar", app.name)
@@ -680,8 +695,12 @@ fn on_msg(s: &mut State, msg: Msg) {
                     .filter(|a| s.store.wants(&serial, &a.name) && app_state(a, &st) != AppState::Blocked)
                     .cloned()
                     .collect();
+                // Bloquear también repone el filtro web; si no falta ningún
+                // candado, se repone aparte (por si quitaste la VPN).
                 if !missing.is_empty() {
                     let _ = s.jobs.send(Job::Block { serial: serial.clone(), apps: missing, auto: true });
+                } else {
+                    let _ = s.jobs.send(Job::Web(serial.clone()));
                 }
             }
             s.states.insert(serial, st);
@@ -715,7 +734,8 @@ fn rebuild_rows(ui: &Rc<Ui>, state: &Rc<RefCell<State>>) {
         name.add_css_class("row-name");
         name.set_xalign(0.0);
         text.append(&name);
-        let hint = gtk::Label::new(Some(&app.hint));
+        let hint = if app.domains.is_empty() { app.hint.clone() } else { format!("{} · también su web", app.hint) };
+        let hint = gtk::Label::new(Some(&hint));
         hint.add_css_class("row-hint");
         hint.set_xalign(0.0);
         text.append(&hint);

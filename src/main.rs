@@ -5,6 +5,7 @@
 //!   cerrojo estado [SERIAL]
 //!   cerrojo bloquear PAQUETE... [-s SERIAL]
 //!   cerrojo desbloquear PAQUETE... [-s SERIAL]
+//!   cerrojo web [SERIAL]            (pone el filtro web como en la ventana)
 //!   cerrojo apk PAQUETE ARCHIVO     (solo genera el candado)
 
 // En Windows, sin consola al abrir la ventana; desde una terminal se engancha
@@ -69,9 +70,16 @@ fn main() -> Result<()> {
                 }
             }
         }
+        "web" => {
+            let serial = pick(serial.or(rest.first().cloned()))?;
+            let n = store::sync_web(&serial)?;
+            // La VPN tarda un instante en levantarse.
+            std::thread::sleep(std::time::Duration::from_millis(3500));
+            println!("filtro web: {n} dominios bloqueados; estado {:?}", device::web_state(&serial)?);
+        }
         "--ventana" | "--gui" => return gui::run(),
         _ => {
-            eprintln!("uso: cerrojo [estado | bloquear PAQ... | desbloquear PAQ... | apk PAQ ARCHIVO] [-s SERIAL]");
+            eprintln!("uso: cerrojo [estado | bloquear PAQ... | desbloquear PAQ... | web | apk PAQ ARCHIVO] [-s SERIAL]");
             std::process::exit(2);
         }
     }

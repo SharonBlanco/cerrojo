@@ -11,6 +11,11 @@ pub struct App {
     pub name: String,
     pub hint: String,
     pub packages: Vec<String>,
+    /// Sus páginas web: al bloquear la app también se bloquean en el
+    /// navegador (filtro DNS, ver device.rs). Cuenta el dominio y todos sus
+    /// subdominios; con "!" delante, una excepción.
+    #[serde(default)]
+    pub domains: Vec<String>,
 }
 
 fn app(name: &str, hint: &str, packages: &[&str]) -> App {
@@ -18,8 +23,24 @@ fn app(name: &str, hint: &str, packages: &[&str]) -> App {
         name: name.into(),
         hint: hint.into(),
         packages: packages.iter().map(|p| p.to_string()).collect(),
+        domains: Vec::new(),
     }
 }
+
+impl App {
+    fn web(mut self, domains: &[&str]) -> App {
+        self.domains = domains.iter().map(|d| d.to_string()).collect();
+        self
+    }
+}
+
+/// Servidores de DNS cifrado (DoH) conocidos: con el filtro puesto, un
+/// navegador configurado para usarlos se lo saltaría.
+pub const BYPASS: &[&str] = &[
+    "dns.google", "dns.google.com", "cloudflare-dns.com", "dns.nextdns.io", "doh.opendns.com",
+    "dns.quad9.net", "dns.adguard-dns.com", "dns.adguard.com", "doh.cleanbrowsing.org",
+    "dns.controld.com", "freedns.controld.com", "doh.mullvad.net", "dns.mullvad.net",
+];
 
 pub fn builtin() -> Vec<App> {
     vec![
@@ -37,15 +58,24 @@ pub fn builtin() -> Vec<App> {
                 "app.revanced.manager.flutter",
             ],
         ),
-        app("TikTok", "Para ti", &["com.zhiliaoapp.musically", "com.zhiliaoapp.musically.go", "com.ss.android.ugc.trill"]),
-        app("Instagram", "Reels", &["com.instagram.android", "com.instagram.lite"]),
-        app("Threads", "Videos en el feed", &["com.instagram.barcelona"]),
-        app("Facebook", "Reels", &["com.facebook.katana", "com.facebook.lite"]),
-        app("Snapchat", "Spotlight", &["com.snapchat.android"]),
-        app("Pinterest", "Videos", &["com.pinterest"]),
-        app("Kwai", "Videos cortos", &["com.kwai.video"]),
-        app("Likee", "Videos cortos", &["video.like"]),
-        app("Snaptube", "Cliente de YouTube", &["com.snaptube.premium"]),
+        // YouTube y YouTube Music solo como app: la web se deja.
+        app("TikTok", "Para ti", &["com.zhiliaoapp.musically", "com.zhiliaoapp.musically.go", "com.ss.android.ugc.trill"])
+            .web(&["tiktok.com", "tiktokv.com", "tiktokcdn.com", "tiktokcdn-us.com", "tiktokw.us", "musical.ly"]),
+        app("Instagram", "Reels", &["com.instagram.android", "com.instagram.lite"])
+            .web(&["instagram.com", "cdninstagram.com", "instagr.am", "ig.me"]),
+        app("Threads", "Videos en el feed", &["com.instagram.barcelona"]).web(&["threads.net", "threads.com"]),
+        // graph.facebook.com se deja: lo usan WhatsApp Business y los
+        // inicios de sesión con Facebook de otras apps.
+        app("Facebook", "Reels", &["com.facebook.katana", "com.facebook.lite"])
+            .web(&["facebook.com", "fb.com", "fb.me", "fb.watch", "m.me", "messenger.com", "!graph.facebook.com"]),
+        app("Snapchat", "Spotlight", &["com.snapchat.android"]).web(&["snapchat.com", "sc-cdn.net"]),
+        app("Pinterest", "Videos", &["com.pinterest"]).web(&[
+            "pinterest.com", "pinimg.com", "pin.it", "pinterest.es", "pinterest.com.mx", "pinterest.cl",
+            "pinterest.co.uk", "pinterest.ca", "pinterest.fr", "pinterest.de",
+        ]),
+        app("Kwai", "Videos cortos", &["com.kwai.video"]).web(&["kwai.com", "kwai.net", "kwaicdn.com", "kwai-pro.com"]),
+        app("Likee", "Videos cortos", &["video.like"]).web(&["likee.video", "like.video", "likeevideo.com"]),
+        app("Snaptube", "Cliente de YouTube", &["com.snaptube.premium"]).web(&["snaptube.app", "snaptubeapp.com"]),
     ]
 }
 

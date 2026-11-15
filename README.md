@@ -34,9 +34,12 @@ la Play Store, ni desde otra tienda, ni con un APK descargado. La llave se queda
 - 🔁 **Se repara solo.** Si quitas un candado desde el celular, Cerrojo lo vuelve a poner en cuanto lo conectas al PC.
 - 🎯 **Un toque, todo listo.** YouTube, YouTube Music, TikTok (y Lite), Instagram (y Lite), Threads, Facebook (y Lite),
   Snapchat, Pinterest, Kwai, Likee, Snaptube y los YouTube parcheados (ReVanced, Morphe).
+- 🌐 **También sus páginas web.** Al bloquear Instagram, TikTok, Facebook, Threads… sus sitios dejan de abrir en
+  cualquier navegador del celular. WhatsApp, LinkedIn y YouTube web siguen funcionando.
 - ➕ **Cualquier otra app** se añade escribiendo su nombre de paquete.
 - 📱 **Varios equipos**: el celular, la tablet, el de tu hermano… cada uno recuerda su lista.
-- 🪶 **Nada que instalar en el celular.** Ni apps espía ni permisos raros: solo `adb`, la herramienta oficial de Android.
+- 🪶 **Nada que hacer en el celular.** Todo va por `adb`, la herramienta oficial de Android: sin cuentas, sin
+  diálogos, sin apps espía.
 - 🆓 Libre, gratis y sin cuentas, anuncios ni telemetría.
 
 | Cuando aún hay reels instalados | Desbloquear cuesta un poco, a propósito |
@@ -120,7 +123,12 @@ Para Android, TikTok "ya está instalada", así que la Play Store solo ofrece *D
 TikTok falla por firma distinta. Las apps que vienen de fábrica (como YouTube en casi todos los Android) no se
 pueden reemplazar, así que se dejan instaladas pero **suspendidas**: al abrirlas, Android dice que están en pausa.
 
-Los candados se generan dentro de Cerrojo, sin necesitar el SDK de Android: el manifiesto, el zip y la firma
+**Las páginas web** las bloquea el *filtro*, una mini app (`android/`) sin icono que Cerrojo instala por adb: una
+VPN local que **solo ve el DNS**. Cuando el navegador pregunta por `instagram.com`, responde "no existe"; el resto
+de preguntas las reenvía al DNS de tu red, y el tráfico normal no pasa por ella. adb le da el permiso de VPN
+(`appops`) sin el diálogo de confirmación y la deja como VPN siempre activa, así que vuelve sola al reiniciar.
+
+Los candados y el filtro se generan dentro de Cerrojo, sin necesitar el SDK de Android: el manifiesto, el zip y la firma
 APK v2 están hechos en Rust (`src/apk.rs`).
 
 ## Preguntas
@@ -132,9 +140,14 @@ APK v2 están hechos en Rust (`src/apk.rs`).
 corta el impulso, y **Cerrojo vuelve a poner el candado la próxima vez que conectes el celular al PC**. Si buscas
 algo imposible de saltar, ninguna app sin root lo es; Cerrojo busca que sea incómodo.
 
-**¿Y desde el navegador?** Cerrojo bloquea apps. Para que los sitios web tampoco te atrapen, combínalo con un DNS
-con bloqueo, como [NextDNS](https://nextdns.io) (gratis): en *Parental Control › Apps* bloqueas YouTube, TikTok e
-Instagram y lo pones en **Ajustes › Conexiones › DNS privado** del celular.
+**¿Y desde el navegador?** También: el filtro web bloquea los sitios de las apps que tengas bloqueadas (y los DNS
+cifrados que servirían para saltárselo). Se puede quitar desde *Ajustes › VPN* o desinstalándolo, pero Cerrojo lo
+vuelve a poner al conectar el celular. YouTube web se deja a propósito; los Shorts dentro de youtube.com no se
+pueden separar por DNS.
+
+**¿Hace más lento el internet?** Solo pasa por el filtro la pregunta de "¿qué IP tiene este sitio?", no las
+descargas ni los videos. En Samsung, la primera vez que se instala puede salir Play Protect: toca *Instalar de
+todos modos*.
 
 **¿Pierdo mis datos?** Al bloquear una app se desinstala, así que su contenido local se borra (tus cuentas siguen
 en los servidores de cada red social). Al desbloquearla, se instala de nuevo desde la Play Store.
@@ -147,6 +160,7 @@ en los servidores de cada red social). Al desbloquearla, se instala de nuevo des
 cerrojo estado                      # qué está bloqueado
 cerrojo bloquear com.zhiliaoapp.musically
 cerrojo desbloquear com.pinterest
+cerrojo web                         # pone o quita el filtro web según lo bloqueado
 cerrojo bloquear PAQUETE -s SERIAL  # con varios equipos conectados
 ```
 
@@ -158,7 +172,8 @@ cargo build --release
 ./target/release/cerrojo
 ```
 
-Rust estable y GTK 4.6 o más nuevo. Las versiones se publican solas con GitHub Actions al subir una etiqueta `vX.Y.Z`.
+Rust estable y GTK 4.6 o más nuevo. El filtro web ya va compilado en `assets/filtro/`; solo si cambias su Java
+hace falta el SDK de Android (`android/build.sh`). Las versiones se publican solas con GitHub Actions al subir una etiqueta `vX.Y.Z`.
 
 ## Licencia
 

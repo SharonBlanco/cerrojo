@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Filtro web de Cerrojo: una VPN local que solo ve el DNS. No tiene icono ni
+     pantalla; se maneja por adb (ver src/device.rs del PC). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.cerrojo.filtro">
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application android:label="Cerrojo" android:allowBackup="false">
+
+        <!-- Solo la abre el shell de adb: DUMP no se le concede a ninguna app. -->
+        <activity android:name=".Orden"
+            android:exported="true"
+            android:permission="android.permission.DUMP"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
+
+        <service android:name=".Filtro"
+            android:exported="true"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <meta-data android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON" android:value="true" />
+        </service>
+
+        <receiver android:name=".Arranque" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
