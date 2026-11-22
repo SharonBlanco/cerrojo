@@ -66,9 +66,12 @@ fn main() -> Result<()> {
         "solo" if rest.len() == 2 => {
             let serial = pick(serial)?;
             let Some(app) = catalog::all().into_iter().find(|a| a.partial.as_ref().is_some_and(|p| p.key == rest[0])) else {
-                bail!("«solo» sirve para: youtube, instagram");
+                bail!("«solo» sirve para: youtube, instagram, whatsapp, linkedin");
             };
             let on = matches!(rest[1].as_str(), "si" | "sí" | "on");
+            if !on && app.partial.as_ref().is_some_and(|p| p.only) {
+                bail!("{} no se bloquea entera; para que vuelvan sus historias: cerrojo desbloquear", app.name);
+            }
             let mut st = store::Store::load();
             st.set_partial(&serial, &app.name, on);
             st.set(&serial, &app.name, true);

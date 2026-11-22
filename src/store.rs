@@ -84,7 +84,11 @@ impl Store {
 
     /// ¿Esta app va en modo «solo los Shorts» en este equipo? (Solo si la app lo admite.)
     pub fn is_partial(&self, serial: &str, app: &crate::catalog::App) -> bool {
-        app.partial.is_some() && self.partial.get(serial).is_some_and(|s| s.contains(&app.name))
+        match &app.partial {
+            Some(p) if p.only => true,
+            Some(_) => self.partial.get(serial).is_some_and(|s| s.contains(&app.name)),
+            None => false,
+        }
     }
 
     /// Lo que debe vigilar el vigía en este equipo ("youtube", "instagram").

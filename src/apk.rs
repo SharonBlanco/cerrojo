@@ -25,7 +25,7 @@ const FILTER_ARSC: &[u8] = include_bytes!("../assets/filtro/resources.arsc");
 const FILTER_DEX: &[u8] = include_bytes!("../assets/filtro/classes.dex");
 pub const FILTER_PKG: &str = "dev.cerrojo.filtro";
 /// El versionCode de android/build.sh.
-pub const FILTER_VERSION: u32 = 11;
+pub const FILTER_VERSION: u32 = 18;
 // FILTER_RES: los recursos sueltos (res/xml/vigia.xml…), ver build.rs.
 include!(concat!(env!("OUT_DIR"), "/filtro_res.rs"));
 

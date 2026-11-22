@@ -35,6 +35,9 @@ pub struct Partial {
     /// Algo más que puede quitar el vigía en este modo (los directos de YouTube).
     #[serde(default)]
     pub extra: Option<Extra>,
+    /// Solo existe este modo: la app nunca se bloquea entera (WhatsApp, LinkedIn).
+    #[serde(default)]
+    pub only: bool,
 }
 
 /// Una opción del modo «solo los Shorts», con su interruptor en la ventana.
@@ -68,7 +71,16 @@ impl App {
             key: key.into(),
             packages: packages.iter().map(|p| p.to_string()).collect(),
             extra: None,
+            only: false,
         });
+        self
+    }
+
+    /// Sin «Toda la app»: solo se le quitan los videos o historias.
+    fn only_partial(mut self) -> App {
+        if let Some(p) = self.partial.as_mut() {
+            p.only = true;
+        }
         self
     }
 
@@ -125,6 +137,13 @@ pub fn builtin() -> Vec<App> {
         app("Kwai", "Videos cortos", &["com.kwai.video"]).web(&["kwai.com", "kwai.net", "kwaicdn.com", "kwai-pro.com"]),
         app("Likee", "Videos cortos", &["video.like"]).web(&["likee.video", "like.video", "likeevideo.com"]),
         app("Snaptube", "Cliente de YouTube", &["com.snaptube.premium"]).web(&["snaptube.app", "snaptubeapp.com"]),
+        // Estas se dejan siempre: solo se les quitan las historias y los videos.
+        app("WhatsApp", "Estados · los chats siguen igual", &["com.whatsapp", "com.whatsapp.w4b"])
+            .partial("Estados", "whatsapp", &["com.whatsapp", "com.whatsapp.w4b"])
+            .only_partial(),
+        app("LinkedIn", "Feed y Videos · mensajes, empleos y lo demás siguen igual", &["com.linkedin.android"])
+            .partial("feed", "linkedin", &["com.linkedin.android"])
+            .only_partial(),
     ]
 }
 

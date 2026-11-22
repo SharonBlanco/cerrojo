@@ -11,7 +11,7 @@ JAR="$SDK/platforms/android-36/android.jar"
 OUT="$HERE/build"
 DEST="$HERE/../assets/filtro"
 # Sube el código al cambiar el Java, para que el PC reinstale el filtro.
-VERSION_CODE=11
+VERSION_CODE=18
 if command -v javac >/dev/null; then JAVAC=(javac); else JAVAC=(java -m jdk.compiler/com.sun.tools.javac.Main); fi
 
 rm -rf "$OUT" && mkdir -p "$OUT"/{classes,dex} "$DEST"

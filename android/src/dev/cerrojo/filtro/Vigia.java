@@ -24,6 +24,7 @@ import android.widget.Toast;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -67,7 +68,22 @@ public class Vigia extends AccessibilityService {
         final String[] barra;
         /** La pestaña: por id o por su texto o descripción. */
         final String[] pestana;
-        final String texto;
+        /** Los textos de la pestaña (en minúsculas): el primero y los de otros idiomas. */
+        String[] textos;
+        /** Pantallas (por su nombre interno) que se cierran en cuanto se abren. */
+        String[] actividades = {};
+        /** ¿Puede dejar el reproductor minimizado al salir? (YouTube). */
+        boolean minimiza;
+        /** La pestaña de inicio cuyo feed se tapa entero (LinkedIn); vacío: ninguna. */
+        String[] inicio = {};
+        /** Lo que dicen las tapas grandes (feed o pantalla entera). */
+        String aviso = "";
+        /**
+         * Una página de las que se pasan deslizando (Novedades de WhatsApp),
+         * reconocida por un título suyo; y la pestaña a la que se vuelve.
+         */
+        String[] pagina = {};
+        String[] volver = {};
         /** El botón de cerrar del reproductor minimizado (trozos de su descripción). */
         final String[] cerrar;
         /** Título de los bloques de videos cortos del feed (null: no se descartan). */
@@ -88,7 +104,7 @@ public class Vigia extends AccessibilityService {
             this.reproductor = reproductor;
             this.barra = barra;
             this.pestana = pestana;
-            this.texto = texto;
+            this.textos = new String[]{texto};
             this.cerrar = cerrar;
             this.bloque = bloque;
             this.menu = menu;
@@ -96,6 +112,39 @@ public class Vigia extends AccessibilityService {
             this.directos = directos;
             this.claro = claro;
             this.oscuro = oscuro;
+        }
+
+        Regla tambien(String... otros) {
+            String[] n = Arrays.copyOf(textos, textos.length + otros.length);
+            System.arraycopy(otros, 0, n, textos.length, otros.length);
+            textos = n;
+            return this;
+        }
+
+        Regla actividades(String... a) {
+            actividades = a;
+            return this;
+        }
+
+        Regla minimiza() {
+            minimiza = true;
+            return this;
+        }
+
+        Regla inicio(String... t) {
+            inicio = t;
+            return this;
+        }
+
+        Regla aviso(String a) {
+            aviso = a;
+            return this;
+        }
+
+        Regla pagina(String[] titulos, String... volverA) {
+            pagina = titulos;
+            volver = volverA;
+            return this;
         }
     }
 
@@ -113,7 +162,7 @@ public class Vigia extends AccessibilityService {
             new String[]{"no me interesa", "not interested", "mostrar menos shorts", "show fewer shorts",
                 "menos shorts", "fewer shorts"},
             new String[]{"en vivo", "en directo", "live", "directo"},
-            0xFFFFFFFF, 0xFF0F0F0F),
+            0xFFFFFFFF, 0xFF0F0F0F).minimiza(),
         new Regla("instagram", "com.instagram.android", "Reels",
             new String[]{"clips_viewer_view_pager"},
             new String[]{"tab_bar"},
@@ -122,6 +171,37 @@ public class Vigia extends AccessibilityService {
             new String[]{"cerrar", "close"},
             null, new String[]{}, new String[]{}, new String[]{},
             0xFFFFFFFF, 0xFF000000),
+        // WhatsApp: los Estados se ven en su propia pantalla (StatusPlaybackActivity),
+        // así que basta con su nombre; la pestaña «Novedades» se tapa.
+        new Regla("whatsapp", "com.whatsapp", "Estados",
+            new String[]{}, new String[]{}, new String[]{},
+            "novedades",
+            new String[]{},
+            null, new String[]{}, new String[]{}, new String[]{},
+            0xFFFFFFFF, 0xFF0B141A)
+            .tambien("updates", "estados", "status").actividades("StatusPlayback", "status.playback")
+            .aviso("Estados bloqueados")
+            .pagina(new String[]{"estados", "status"}, "chats"),
+        new Regla("whatsapp", "com.whatsapp.w4b", "Estados",
+            new String[]{}, new String[]{}, new String[]{},
+            "novedades",
+            new String[]{},
+            null, new String[]{}, new String[]{}, new String[]{},
+            0xFFFFFFFF, 0xFF0B141A)
+            .tambien("updates", "estados", "status").actividades("StatusPlayback", "status.playback")
+            .aviso("Estados bloqueados")
+            .pagina(new String[]{"estados", "status"}, "chats"),
+        // LinkedIn: el feed de Inicio se tapa entero (buscador, mensajes y las
+        // demás pestañas quedan libres) y la pestaña «Video» también.
+        new Regla("linkedin", "com.linkedin.android", "Videos",
+            new String[]{}, new String[]{}, new String[]{},
+            "video",
+            new String[]{},
+            null, new String[]{}, new String[]{}, new String[]{},
+            0xFFFFFFFF, 0xFF1B1F23)
+            .tambien("vídeo", "videos", "vídeos")
+            .inicio("inicio", "home")
+            .aviso("Feed bloqueado por Cerrojo\nLas demás pestañas siguen abiertas"),
     };
 
     private volatile Map<String, Regla> activas = new HashMap<>();
@@ -169,6 +249,19 @@ public class Vigia extends AccessibilityService {
     private long menuDesde, ultimoBloque;
     private int menuTipo;
     private final int[] fallos = new int[2];
+    /**
+     * Una pantalla prohibida abierta (los Estados de WhatsApp): se tapa entera
+     * y se pulsa Atrás hasta que se cierre de verdad.
+     */
+    private Regla bloqueando;
+    private long bloqueoDesde;
+    private int insistencias;
+    private TextView tapaTotal;
+    /** La página prohibida (Novedades): su nodo, su tapa y cómo se movía. */
+    private AccessibilityNodeInfo nodoPagina;
+    private TextView tapaPagina;
+    private Rect tapaPaginaEn, paginaAntes;
+    private long paginaAntesEn, paginaBuscada, ultimoVolver;
     /** El PC pidió quitar también los directos ("youtube-directos"). */
     private volatile boolean quitarDirectos;
 
@@ -217,8 +310,54 @@ public class Vigia extends AccessibilityService {
         CharSequence ep = e.getPackageName();
         boolean deVigilada = ep != null && m.containsKey(ep.toString());
         // Lo de otras apps solo importa para quitar las tapas al salir.
-        if (!deVigilada && puestas.isEmpty() && tapaPestana == null) return;
+        if (!deVigilada && puestas.isEmpty() && tapaPestana == null && tapaTotal == null && tapaPagina == null
+                && capaFeed.v == null && capaInicio.v == null) return;
         long ahora = SystemClock.uptimeMillis();
+        if (e.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && e.getClassName() != null) {
+            String pantallaNueva = e.getClassName().toString();
+            Regla ra = deVigilada ? m.get(ep.toString()) : null;
+            boolean prohibida = ra != null && esProhibida(ra, pantallaNueva);
+            if (prohibida) {
+                // Los Estados de WhatsApp: tapados ya y fuera.
+                empezarBloqueo(ra, ahora);
+                return;
+            }
+            if (bloqueando != null && ep != null && !ep.toString().equals(getPackageName())) {
+                boolean cerrada;
+                if (bloqueando.pkg.equals(ep.toString())) {
+                    // Otra pantalla de WhatsApp de verdad (no un menú encima): se cerró.
+                    cerrada = pantallaNueva.contains("Activity") || !pantallaNueva.startsWith("android.");
+                } else {
+                    // Otra app: solo cuenta si ya está al frente (no una notificación encima).
+                    AccessibilityNodeInfo rt = getRootInActiveWindow();
+                    CharSequence rtp = rt == null ? null : rt.getPackageName();
+                    cerrada = rtp != null && !bloqueando.pkg.equals(rtp.toString());
+                }
+                if (cerrada) terminarBloqueo();
+            }
+        }
+        if (deVigilada && (e.getEventType() == AccessibilityEvent.TYPE_VIEW_CLICKED
+                || e.getEventType() == AccessibilityEvent.TYPE_VIEW_SELECTED)) {
+            Regla rc = m.get(ep.toString());
+            if (rc.inicio.length > 0 && pantallaActual != null) {
+                // Estos avisos llegan al momento (no van con retraso como los demás).
+                if (esInicio(e, rc)) {
+                    inicioHasta = ahora + MARGEN_INICIO;
+                    clicInicio = ahora;
+                    Rect tb = capaInicio.en != null ? capaInicio.en
+                            : nodoInicio != null ? limites(nodoInicio) : null;
+                    if (tb != null) {
+                        capaFeed.poner(rectFeed(tb, pantallaActual), rc);
+                        capaInicio.quitar();
+                    }
+                } else if (e.getEventType() == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+                    // Otro botón: ya no se está yendo a Inicio.
+                    inicioHasta = 0;
+                    clicOtro = ahora;
+                }
+            }
+            seguir(ahora);
+        }
         if (deVigilada && e.getEventType() == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
             // Deslizando: a mirar la barra a cada fotograma (lo que decide es
             // si ella se mueve, no el aviso, que llega tarde).
@@ -284,7 +423,17 @@ public class Vigia extends AccessibilityService {
             regla = r;
             pantallaActual = pantalla;
             fijas = pequenos;
+            if (r.inicio.length > 0) revisarInicio(root, r, pantalla, true);
+            if (bloqueando == null && reproductorDentro(root, r, ahora)) {
+                bloqueoPorDentro = true;
+                empezarBloqueo(r, ahora);
+                return;
+            }
             nodoPestana = pestana(root, barra, r, pantalla);
+            if (r.pagina.length > 0) {
+                if (nodoPagina == null || !nodoPagina.refresh()) nodoPagina = buscarPagina(root, r, pantalla, ahora);
+                mostrarPagina(root, r);
+            }
             mostrar();
             seguir(ahora);
 
@@ -320,8 +469,10 @@ public class Vigia extends AccessibilityService {
     private void salir(Regla r, long ahora) {
         // Atrás cierra el Short o, si venía del feed, lo minimiza: eso lo
         // recoge cerrarMinimizado durante los próximos segundos.
-        salirHasta = ahora + TRAS_SALIR;
-        pendienteDesde = ahora;
+        if (r.minimiza) {
+            salirHasta = ahora + TRAS_SALIR;
+            pendienteDesde = ahora;
+        }
         if (ahora - ultimoAtras < 600) return; // dar tiempo a que se cierre
         deslices = 0;
         if (ahora - rachaDesde > 5000) {
@@ -419,7 +570,7 @@ public class Vigia extends AccessibilityService {
                 boolean ok = false;
                 String vid = n.getViewIdResourceName();
                 for (String id : r.pestana) ok |= (r.pkg + ":id/" + id).equals(vid);
-                ok |= igual(n.getText(), r.texto) || igual(n.getContentDescription(), r.texto);
+                ok |= igualAlguno(n.getText(), r.textos) || igualAlguno(n.getContentDescription(), r.textos);
                 if (ok) return clicable(n);
             }
             return null;
@@ -427,14 +578,17 @@ public class Vigia extends AccessibilityService {
         // Sin barra reconocida: por id o texto, abajo del todo (o a la izquierda).
         List<AccessibilityNodeInfo> cand = new ArrayList<>();
         for (String id : r.pestana) cand.addAll(porId(root, r, id));
-        List<AccessibilityNodeInfo> t = root.findAccessibilityNodeInfosByText(r.texto);
-        if (t != null) cand.addAll(t);
+        for (String texto : r.textos) {
+            List<AccessibilityNodeInfo> t = root.findAccessibilityNodeInfosByText(texto);
+            if (t != null) cand.addAll(t);
+        }
         for (AccessibilityNodeInfo n : cand) {
             if (n == null || !n.isVisibleToUser()) continue;
             boolean ok = false;
             String vid = n.getViewIdResourceName();
             for (String id : r.pestana) ok |= (r.pkg + ":id/" + id).equals(vid);
-            ok |= igual(n.getText(), r.texto) || igual(n.getContentDescription(), r.texto);
+            // «Novedades, 3 nuevas» también cuenta.
+            ok |= igualAlguno(n.getText(), r.textos) || igualAlguno(n.getContentDescription(), r.textos);
             if (!ok) continue;
             // La pestaña es el botón entero, no solo su texto.
             AccessibilityNodeInfo boton = clicable(n);
@@ -515,6 +669,21 @@ public class Vigia extends AccessibilityService {
             AccessibilityNodeInfo n = nodoPestana;
             if (n == null || !n.refresh()) nodoPestana = buscarPestana();
             mostrar();
+            if (regla.inicio.length > 0 && pantallaActual != null) {
+                // Cada fotograma: ¿se llegó a Inicio sin tocar el botón (con Atrás)?
+                AccessibilityNodeInfo rt = getRootInActiveWindow();
+                CharSequence rtp = rt == null ? null : rt.getPackageName();
+                if (rtp != null && regla.pkg.equals(rtp.toString())) revisarInicio(rt, regla, pantallaActual, false);
+            }
+            if (regla.pagina.length > 0) {
+                long ahora = SystemClock.uptimeMillis();
+                AccessibilityNodeInfo pg = nodoPagina;
+                if (pg == null || !pg.refresh()) {
+                    AccessibilityNodeInfo root = getRootInActiveWindow();
+                    nodoPagina = root == null || pantallaActual == null ? null : buscarPagina(root, regla, pantallaActual, ahora);
+                }
+                mostrarPagina(null, regla);
+            }
         } catch (RuntimeException ignored) {
             // Se sigue en el siguiente fotograma.
         }
@@ -763,6 +932,7 @@ public class Vigia extends AccessibilityService {
                 try {
                     TextView v = vistas.get(i);
                     v.setBackgroundColor(fondo);
+                    textoTapa(v, t, r);
                     wm.updateViewLayout(v, params(t, true));
                     puestas.set(i, t);
                 } catch (RuntimeException ignored) {
@@ -771,6 +941,7 @@ public class Vigia extends AccessibilityService {
             }
             try {
                 TextView v = nuevaTapa(fondo);
+                textoTapa(v, t, r);
                 wm.addView(v, params(t, true));
                 vistas.add(v);
                 puestas.add(t);
@@ -787,6 +958,437 @@ public class Vigia extends AccessibilityService {
             vistas.remove(last);
             puestas.remove(last);
         }
+    }
+
+    /** Las tapas grandes (el feed) dicen qué tapan; las pequeñas, solo el cerebro. */
+    private void textoTapa(TextView v, Rect t, Regla r) {
+        Rect p = pantallaActual;
+        boolean grande = p != null && t.height() * 4 > p.height() && r != null && !r.aviso.isEmpty();
+        v.setText(grande ? "\uD83E\uDDE0\n" + r.aviso : "\uD83E\uDDE0");
+        v.setTextSize(grande ? 18 : 16);
+        v.setTextColor(0xFF8A8F98);
+    }
+
+    // ---- Pantallas prohibidas (Estados de WhatsApp) ----
+
+    private static final String[] REPRODUCTOR = {"playback", "viewer", "player"};
+
+    /**
+     * ¿Es una pantalla de Estados? Por su nombre exacto o, si WhatsApp usa otra
+     * (desde el perfil, por ejemplo), por uno que junte «status» con
+     * «playback», «viewer» o «player».
+     */
+    private static boolean esProhibida(Regla r, String clase) {
+        if (r.actividades.length == 0) return false;
+        for (String a : r.actividades) {
+            if (clase.contains(a)) return true;
+        }
+        String c = clase.toLowerCase(Locale.ROOT);
+        return c.contains("status") && contiene(c, REPRODUCTOR);
+    }
+
+    private long reproductorMirado;
+    /** El bloqueo empezó por el reproductor dentro de otra pantalla (no por su nombre). */
+    private boolean bloqueoPorDentro;
+
+    /**
+     * El reproductor de Estados metido dentro de otra pantalla (el perfil de un
+     * contacto): se reconoce por los nombres internos de sus piezas.
+     */
+    private boolean reproductorDentro(AccessibilityNodeInfo root, Regla r, long ahora) {
+        if (r.actividades.length == 0 || ahora - reproductorMirado < 120) return false;
+        return hayReproductor(root, r, ahora);
+    }
+
+    private boolean hayReproductor(AccessibilityNodeInfo root, Regla r, long ahora) {
+        if (root == null) return false;
+        reproductorMirado = ahora;
+        String pre = r.pkg + ":id/";
+        for (AccessibilityNodeInfo n : recorrer(root)) {
+            String vid = n.getViewIdResourceName();
+            if (vid == null || !vid.startsWith(pre)) continue;
+            String id = vid.substring(pre.length()).toLowerCase(Locale.ROOT);
+            if (id.contains("status") && contiene(id, REPRODUCTOR)) return true;
+            if (id.startsWith("playback") || id.contains("status_view_pager") || id.contains("statuses_view_pager")) return true;
+        }
+        return false;
+    }
+
+    private void empezarBloqueo(Regla r, long ahora) {
+        if (bloqueando == null) {
+            bloqueoDesde = ahora;
+            insistencias = 0;
+        }
+        bloqueando = r;
+        ponerTapaTotal(r);
+        manejador.removeCallbacks(insistir);
+        insistir.run();
+    }
+
+    /**
+     * Atrás hasta que la pantalla se cierre: mientras se está abriendo,
+     * WhatsApp ignora el primer Atrás. Si a la tercera sigue ahí, al inicio.
+     */
+    private final Runnable insistir = new Runnable() {
+        @Override
+        public void run() {
+            Regla r = bloqueando;
+            if (r == null) return;
+            long ahora = SystemClock.uptimeMillis();
+            if (ahora - bloqueoDesde > 8000) {
+                terminarBloqueo();
+                return;
+            }
+            if (bloqueoPorDentro && insistencias > 0) {
+                // Cerrarlo no cambia de pantalla: se mira si sigue ahí antes de
+                // otro Atrás (si no, se saldría también del perfil).
+                if (!hayReproductor(getRootInActiveWindow(), r, ahora)) {
+                    terminarBloqueo();
+                    return;
+                }
+            }
+            insistencias++;
+            performGlobalAction(insistencias > 3 ? GLOBAL_ACTION_HOME : GLOBAL_ACTION_BACK);
+            if (insistencias == 1 && ahora - ultimoAviso > 4000) {
+                ultimoAviso = ahora;
+                Toast.makeText(Vigia.this, "Cerrojo: " + r.nombre + " bloqueados", Toast.LENGTH_SHORT).show();
+            }
+            manejador.postDelayed(this, 350);
+        }
+    };
+
+    private void terminarBloqueo() {
+        bloqueando = null;
+        bloqueoPorDentro = false;
+        manejador.removeCallbacks(insistir);
+        if (tapaTotal != null) {
+            try {
+                ((WindowManager) getSystemService(WINDOW_SERVICE)).removeView(tapaTotal);
+            } catch (RuntimeException ignored) {
+            }
+            tapaTotal = null;
+        }
+    }
+
+    /** Toda la pantalla tapada: no se llega a ver nada mientras se cierra. */
+    private void ponerTapaTotal(Regla r) {
+        if (tapaTotal != null) return;
+        TextView v = nuevaTapa(fondo(r));
+        v.setText("\uD83E\uDDE0\n" + (r.aviso.isEmpty() ? r.nombre + " bloqueados" : r.aviso));
+        v.setTextSize(20);
+        v.setTextColor(0xFF8A8F98);
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.OPAQUE);
+        if (Build.VERSION.SDK_INT >= 28) {
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
+        try {
+            ((WindowManager) getSystemService(WINDOW_SERVICE)).addView(v, lp);
+            tapaTotal = v;
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    // ---- Página que se pasa deslizando (Novedades de WhatsApp) ----
+
+    /**
+     * La página entera que contiene uno de los títulos (aunque esté fuera de la
+     * pantalla, esperando al lado): el ancestro que es una página del
+     * deslizador (su padre se desplaza y ocupa casi todo el ancho).
+     */
+    private AccessibilityNodeInfo buscarPagina(AccessibilityNodeInfo root, Regla r, Rect pantalla, long ahora) {
+        if (ahora - paginaBuscada < 100) return null;
+        paginaBuscada = ahora;
+        for (String t : r.pagina) {
+            List<AccessibilityNodeInfo> l = root.findAccessibilityNodeInfosByText(t);
+            if (l == null) continue;
+            for (AccessibilityNodeInfo n : l) {
+                if (!igual(n.getText(), t)) continue;
+                AccessibilityNodeInfo m = n;
+                for (int i = 0; i < 14 && m != null; i++) {
+                    AccessibilityNodeInfo padre = m.getParent();
+                    if (padre == null) break;
+                    if (padre.isScrollable() && limites(padre).width() * 10 >= pantalla.width() * 9) {
+                        // ¿Es una página (alta) y no una fila de una lista?
+                        Rect b = limites(m);
+                        boolean alta = m.getChildCount() > 0 && (b.isEmpty() || b.height() * 2 >= pantalla.height()
+                                || limites(padre).height() * 2 >= pantalla.height());
+                        if (alta && padre.getChildCount() > 1) return m;
+                    }
+                    m = padre;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * La tapa de la página sigue a la página mientras entra deslizando, un
+     * poco por delante; si se queda en pantalla, se vuelve a la pestaña de chats.
+     */
+    private void mostrarPagina(AccessibilityNodeInfo root, Regla r) {
+        long ahora = SystemClock.uptimeMillis();
+        AccessibilityNodeInfo n = nodoPagina;
+        Rect p = pantallaActual;
+        Rect b = n == null || p == null ? null : limites(n);
+        if (b == null || b.isEmpty() || !Rect.intersects(b, p)) {
+            paginaAntes = null;
+            ponerTapaPagina(null, r);
+            return;
+        }
+        // Entra por la derecha (su borde izquierdo avanza) o por la izquierda
+        // (avanza el derecho): la tapa se adelanta por ese borde.
+        int dl = 0, dr = 0;
+        float dt = 1;
+        if (paginaAntes != null) {
+            dl = b.left - paginaAntes.left;
+            dr = b.right - paginaAntes.right;
+            dt = Math.max(1, ahora - paginaAntesEn);
+        }
+        boolean moviendose = dl != 0 || dr != 0;
+        paginaAntes = new Rect(b);
+        paginaAntesEn = ahora;
+        Rect c = new Rect(b);
+        c.left += Math.min(0, Math.round(dl / dt * ADELANTO));
+        c.right += Math.max(0, Math.round(dr / dt * ADELANTO));
+        if (!c.intersect(p)) {
+            ponerTapaPagina(null, r);
+            return;
+        }
+        ponerTapaPagina(c, r);
+        seguirHasta = Math.max(seguirHasta, ahora + 300);
+        // Ya quieta y casi entera: de vuelta a Chats.
+        if (!moviendose && c.width() * 10 >= p.width() * 8 && ahora - ultimoVolver > 700) {
+            ultimoVolver = ahora;
+            AccessibilityNodeInfo rt = root != null ? root : getRootInActiveWindow();
+            if (rt != null) volver(rt, r, p);
+        }
+    }
+
+    private static void volver(AccessibilityNodeInfo root, Regla r, Rect pantalla) {
+        for (String t : r.volver) {
+            List<AccessibilityNodeInfo> l = root.findAccessibilityNodeInfosByText(t);
+            if (l == null) continue;
+            for (AccessibilityNodeInfo n : l) {
+                if (!n.isVisibleToUser()) continue;
+                if (!igualAlguno(n.getText(), r.volver) && !igualAlguno(n.getContentDescription(), r.volver)) continue;
+                AccessibilityNodeInfo b = clicable(n);
+                if (enBorde(limites(b), pantalla) && b.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return;
+            }
+        }
+    }
+
+    private void ponerTapaPagina(Rect b, Regla r) {
+        WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        try {
+            if (b == null) {
+                if (tapaPagina != null) {
+                    wm.removeView(tapaPagina);
+                    tapaPagina = null;
+                    tapaPaginaEn = null;
+                }
+                return;
+            }
+            if (tapaPagina == null) {
+                TextView v = nuevaTapa(fondo(r));
+                v.setText("\uD83E\uDDE0\n" + (r == null ? "" : r.aviso));
+                v.setTextSize(18);
+                v.setTextColor(0xFF8A8F98);
+                wm.addView(v, params(b, true));
+                tapaPagina = v;
+            } else if (!b.equals(tapaPaginaEn)) {
+                wm.updateViewLayout(tapaPagina, params(b, true));
+            }
+            tapaPaginaEn = new Rect(b);
+        } catch (RuntimeException ignored) {
+            tapaPagina = null;
+            tapaPaginaEn = null;
+        }
+    }
+
+    // ---- Feed de inicio (LinkedIn) ----
+    //
+    // Con «Inicio» elegida, una tapa fija sobre el feed (buscador, mensajes y
+    // las demás pestañas quedan libres). Para que no haya ni un fotograma de
+    // feed al pulsar «Inicio» desde otra pestaña, encima de ese botón hay una
+    // capa transparente: el toque llega primero aquí, se pone la tapa y solo
+    // entonces se le pasa el toque a LinkedIn.
+
+    private static final String[] SELECCIONADA = {"seleccionad", "selected"};
+
+    /** Una ventana de tapa suelta (el feed, o la capa del botón). */
+    private final class Capa {
+        private final boolean transparente;
+        TextView v;
+        Rect en;
+
+        Capa(boolean transparente) {
+            this.transparente = transparente;
+        }
+
+        void poner(Rect b, Regla r) {
+            WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+            try {
+                if (v == null) {
+                    v = nuevaTapa(transparente ? 0 : fondo(r));
+                    if (transparente) {
+                        v.setText("");
+                        v.setOnClickListener(x -> pulsarInicio());
+                    } else {
+                        v.setText("\uD83E\uDDE0\n" + (r == null ? "" : r.aviso));
+                        v.setTextSize(18);
+                        v.setTextColor(0xFF8A8F98);
+                    }
+                    wm.addView(v, params(b, true));
+                } else if (!b.equals(en)) {
+                    wm.updateViewLayout(v, params(b, true));
+                }
+                en = new Rect(b);
+            } catch (RuntimeException ignored) {
+                quitar();
+            }
+        }
+
+        void quitar() {
+            if (v != null) {
+                try {
+                    ((WindowManager) getSystemService(WINDOW_SERVICE)).removeView(v);
+                } catch (RuntimeException ignored) {
+                }
+            }
+            v = null;
+            en = null;
+        }
+    }
+
+    private final Capa capaFeed = new Capa(false);
+    private final Capa capaInicio = new Capa(true);
+    /** El botón «Inicio» de abajo, y dónde quedó el feed la última vez. */
+    private AccessibilityNodeInfo nodoInicio;
+    private Rect feedUltimo;
+    private long feedMedido;
+    /** Tras pulsar «Inicio», hasta cuándo se da por hecho que se está en Inicio. */
+    private long inicioHasta;
+    private static final long MARGEN_INICIO = 800;
+    /** El orden de los últimos toques: «Inicio» y cualquier otro botón. */
+    private long clicInicio, clicOtro;
+
+    /** El botón «Inicio» de la barra de abajo, o null. */
+    private static AccessibilityNodeInfo botonInicio(AccessibilityNodeInfo root, Regla r, Rect pantalla) {
+        for (String t : r.inicio) {
+            List<AccessibilityNodeInfo> l = root.findAccessibilityNodeInfosByText(t);
+            if (l == null) continue;
+            for (AccessibilityNodeInfo n : l) {
+                if (!n.isVisibleToUser()) continue;
+                if (!igualAlguno(n.getText(), r.inicio) && !igualAlguno(n.getContentDescription(), r.inicio)) continue;
+                AccessibilityNodeInfo b = clicable(n);
+                if (enBorde(limites(b), pantalla)) return b;
+            }
+        }
+        return null;
+    }
+
+    private static boolean elegida(AccessibilityNodeInfo b) {
+        if (b.isSelected() || contiene(b.getContentDescription(), SELECCIONADA)) return true;
+        for (int i = 0; i < b.getChildCount(); i++) {
+            AccessibilityNodeInfo c = b.getChild(i);
+            if (c != null && (c.isSelected() || contiene(c.getContentDescription(), SELECCIONADA))) return true;
+        }
+        return false;
+    }
+
+    /** Dónde tapar el feed: lo último medido o, sin medida, de arriba a la barra. */
+    private Rect rectFeed(Rect inicio, Rect pantalla) {
+        if (feedUltimo != null) {
+            Rect f = new Rect(feedUltimo);
+            f.bottom = Math.min(f.bottom, inicio.top);
+            if (f.height() > pantalla.height() / 5) return f;
+        }
+        return new Rect(pantalla.left, pantalla.top + pantalla.height() * 12 / 100, pantalla.right, inicio.top);
+    }
+
+    /** La lista más grande por encima de la barra (el feed), para ajustar la tapa. */
+    private void medirFeed(AccessibilityNodeInfo root, Rect inicio, Rect pantalla) {
+        Rect lista = null;
+        for (AccessibilityNodeInfo n : recorrer(root)) {
+            if (!n.isScrollable()) continue;
+            Rect b = limites(n);
+            if (b.width() * 2 < pantalla.width() || b.top >= inicio.top) continue;
+            if (lista == null || (long) b.width() * b.height() > (long) lista.width() * lista.height()) lista = b;
+        }
+        if (lista != null && Math.min(lista.bottom, inicio.top) - lista.top > pantalla.height() / 5) {
+            feedUltimo = new Rect(pantalla.left, lista.top, pantalla.right, Math.min(lista.bottom, inicio.top));
+        }
+    }
+
+    /**
+     * Pone o quita la tapa del feed según la pestaña elegida. Barato (una
+     * búsqueda por texto): se puede llamar en cada fotograma.
+     */
+    private void revisarInicio(AccessibilityNodeInfo root, Regla r, Rect pantalla, boolean medir) {
+        AccessibilityNodeInfo b = root == null ? null : botonInicio(root, r, pantalla);
+        nodoInicio = b;
+        if (b == null) {
+            capaFeed.quitar();
+            capaInicio.quitar();
+            return;
+        }
+        Rect tb = limites(b);
+        // Ante la duda, tapado: solo se destapa si LinkedIn dice que hay OTRA
+        // pestaña elegida (con toques rápidos, la marca va por detrás).
+        boolean otra = false;
+        AccessibilityNodeInfo nav = b.getParent();
+        if (nav != null) {
+            for (int i = 0; i < nav.getChildCount(); i++) {
+                AccessibilityNodeInfo c = nav.getChild(i);
+                if (c != null && !c.equals(b) && elegida(c)) otra = true;
+            }
+        }
+        // Si lo último que se tocó fue otro botón (después de «Inicio»), también
+        // vale como confirmación, por si LinkedIn no marca las demás pestañas.
+        boolean salio = otra || clicOtro > clicInicio;
+        boolean tapar = elegida(b) || SystemClock.uptimeMillis() < inicioHasta || (!salio && capaFeed.v != null);
+        if (tapar) {
+            capaInicio.quitar();
+            long ahora = SystemClock.uptimeMillis();
+            if (medir && (feedUltimo == null || ahora - feedMedido > 1500)) {
+                feedMedido = ahora;
+                medirFeed(root, tb, pantalla);
+            }
+            capaFeed.poner(rectFeed(tb, pantalla), r);
+        } else {
+            capaFeed.quitar();
+            capaInicio.poner(tb, r);
+        }
+    }
+
+    /** ¿El aviso es del botón «Inicio»? (por su texto o descripción) */
+    private static boolean esInicio(AccessibilityEvent e, Regla r) {
+        if (igualAlguno(e.getContentDescription(), r.inicio)) return true;
+        for (CharSequence t : e.getText()) {
+            if (igualAlguno(t, r.inicio)) return true;
+        }
+        return false;
+    }
+
+    /** Tocaste «Inicio»: la tapa ya, y después el toque a LinkedIn. */
+    private void pulsarInicio() {
+        Regla r = regla;
+        Rect p = pantallaActual;
+        AccessibilityNodeInfo b = nodoInicio;
+        if (r == null || p == null || b == null) return;
+        Rect tb = capaInicio.en != null ? capaInicio.en : limites(b);
+        inicioHasta = SystemClock.uptimeMillis() + MARGEN_INICIO;
+        clicInicio = SystemClock.uptimeMillis();
+        capaFeed.poner(rectFeed(tb, p), r);
+        capaInicio.quitar();
+        b.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        seguir(SystemClock.uptimeMillis());
     }
 
     private TextView nuevaTapa(int fondo) {
@@ -892,5 +1494,12 @@ public class Vigia extends AccessibilityService {
         ponerTapas(new ArrayList<>(), null);
         quitarTapaPestana();
         quitarVigilante();
+        capaFeed.quitar();
+        capaInicio.quitar();
+        nodoInicio = null;
+        terminarBloqueo();
+        nodoPagina = null;
+        paginaAntes = null;
+        ponerTapaPagina(null, null);
     }
 }

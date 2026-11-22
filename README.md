@@ -41,6 +41,10 @@ la Play Store, ni desde otra tienda, ni con un APK descargado. La llave se queda
   Reels*: la app sigue funcionando, pero el reproductor de videos cortos se cierra en cuanto aparece y su pestaña
   de abajo queda tapada con un 🧠. Los bloques de Shorts del feed se quitan con «No me interesa», y con la casilla
   *Quitar también los directos*, los directos también.
+- 💬 **Sin Estados de WhatsApp ni feed de LinkedIn.** Estas dos nunca se bloquean enteras. En WhatsApp los chats
+  siguen igual, pero un Estado queda tapado y se cierra en cuanto se abre, y la pestaña *Novedades* queda tapada. En
+  LinkedIn el feed de *Inicio* y la pestaña *Video* quedan tapados; buscador, mensajes, red, notificaciones y
+  empleos siguen abiertos.
 - ➕ **Cualquier otra app** se añade escribiendo su nombre de paquete.
 - 📱 **Varios equipos**: el celular, la tablet, el de tu hermano… cada uno recuerda su lista.
 - 🪶 **Nada que hacer en el celular.** Todo va por `adb`, la herramienta oficial de Android: sin cuentas, sin
@@ -181,6 +185,7 @@ cerrojo web                         # pone o quita el filtro web según lo bloqu
 cerrojo web apagar                  # lo desactiva en este equipo (encender lo vuelve a poner)
 cerrojo solo youtube si             # YouTube usable, sin Shorts (no: bloquearla entera)
 cerrojo solo instagram si           # Instagram usable, sin Reels
+cerrojo solo whatsapp si            # WhatsApp sin Estados (linkedin: sin feed)
 cerrojo bloquear PAQUETE -s SERIAL  # con varios equipos conectados
 ```
 

@@ -891,7 +891,7 @@ fn rebuild_rows(ui: &Rc<Ui>, state: &Rc<RefCell<State>>) {
         hint.add_css_class("row-hint");
         hint.set_xalign(0.0);
         text.append(&hint);
-        let modes = app.partial.as_ref().map(|pp| {
+        let modes = app.partial.as_ref().filter(|pp| !pp.only).map(|pp| {
             let seg = gtk::Box::new(gtk::Orientation::Horizontal, 4);
             seg.add_css_class("seg");
             let whole = gtk::ToggleButton::with_label("Toda la app");
@@ -951,9 +951,20 @@ fn rebuild_rows(ui: &Rc<Ui>, state: &Rc<RefCell<State>>) {
                     glib::Propagation::Proceed
                 } else {
                     s.pending_unblock = Some(app.clone());
-                    ui.confirm_text.set_text(&format!("¿Desbloquear {}?", app.name));
-                    ui.confirm_why.set_text(APP_WHY);
-                    ui.confirm_go.set_label("Desbloquear");
+                    let guarded = s.store.is_partial(&serial, &app);
+                    let what = app.partial.as_ref().map(|pp| pp.what.clone()).unwrap_or_default();
+                    if guarded {
+                        ui.confirm_text.set_text(&format!("¿Volver a ver {what} en {}?", app.name));
+                        ui.confirm_why.set_text(&format!(
+                            "{} se seguirá usando igual, pero volverá a mostrar {what}. Si es por un rato, acuérdate de bloquearlo después.",
+                            app.name
+                        ));
+                        ui.confirm_go.set_label("Que vuelvan");
+                    } else {
+                        ui.confirm_text.set_text(&format!("¿Desbloquear {}?", app.name));
+                        ui.confirm_why.set_text(APP_WHY);
+                        ui.confirm_go.set_label("Desbloquear");
+                    }
                     ui.confirm.set_visible(true);
                     glib::Propagation::Stop
                 }
@@ -1083,6 +1094,7 @@ fn render(ui: &Rc<Ui>, state: &Rc<RefCell<State>>) {
         let guarded = partial && s.store.wants(&device.serial, &row.app.name);
         let what = row.app.partial.as_ref().map(|pp| pp.what.as_str()).unwrap_or_default();
         let sin = format!("Sin {what}");
+        let con = format!("Con {what}");
         let (text, class, on) = if guarded && st.is_some() {
             // Modo «solo los Shorts»: lo que cuenta es el vigía.
             match guard {
@@ -1096,6 +1108,9 @@ fn render(ui: &Rc<Ui>, state: &Rc<RefCell<State>>) {
                 }
                 None => ("…", "", true),
             }
+        } else if partial && st.is_some() {
+            // WhatsApp o LinkedIn sin vigía: se usan normal, con sus historias.
+            (con.as_str(), "", false)
         } else {
             match st.as_ref().map(|m| app_state(&row.app, m)) {
                 Some(AppState::Blocked) => {
