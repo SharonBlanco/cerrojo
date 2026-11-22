@@ -7,6 +7,7 @@
 //!   cerrojo desbloquear PAQUETE... [-s SERIAL]
 //!   cerrojo web [SERIAL]            (pone el filtro web como en la ventana)
 //!   cerrojo web apagar|encender [-s SERIAL]
+//!   cerrojo solo youtube|instagram si|no [-s SERIAL]   (solo sin Shorts/Reels)
 //!   cerrojo apk PAQUETE ARCHIVO     (solo genera el candado)
 
 // En Windows, sin consola al abrir la ventana; desde una terminal se engancha
@@ -60,6 +61,31 @@ fn main() -> Result<()> {
                     println!("{:<20} {:<40} {:?}", app.name, p, st.get(p).copied().unwrap_or(device::PkgState::Absent));
                 }
             }
+            println!("vigía de Shorts y Reels: {}", if device::guard_state(&serial)? { "encendido" } else { "apagado" });
+        }
+        "solo" if rest.len() == 2 => {
+            let serial = pick(serial)?;
+            let Some(app) = catalog::all().into_iter().find(|a| a.partial.as_ref().is_some_and(|p| p.key == rest[0])) else {
+                bail!("«solo» sirve para: youtube, instagram");
+            };
+            let on = matches!(rest[1].as_str(), "si" | "sí" | "on");
+            let mut st = store::Store::load();
+            st.set_partial(&serial, &app.name, on);
+            st.set(&serial, &app.name, true);
+            let pp = app.partial.as_ref().unwrap();
+            for p in &app.packages {
+                let r = if on && pp.packages.contains(p) { device::unblock(&serial, p) } else { device::block(&serial, p) };
+                if let Err(e) = r {
+                    println!("{p}: {e:#}");
+                }
+            }
+            store::sync_web(&serial)?;
+            println!(
+                "{}: {}; vigía {}",
+                app.name,
+                if on { format!("solo sin {}", pp.what) } else { "bloqueada entera".into() },
+                if device::guard_state(&serial)? { "encendido" } else { "apagado" }
+            );
         }
         "bloquear" | "desbloquear" if !rest.is_empty() => {
             let serial = pick(serial)?;
@@ -82,10 +108,11 @@ fn main() -> Result<()> {
             // La VPN tarda un instante en levantarse.
             std::thread::sleep(std::time::Duration::from_millis(3500));
             println!("filtro web: {n} dominios bloqueados; estado {:?}", device::web_state(&serial)?);
+            println!("vigía de Shorts y Reels: {}", if device::guard_state(&serial)? { "encendido" } else { "apagado" });
         }
         "--ventana" | "--gui" => return gui::run(),
         _ => {
-            eprintln!("uso: cerrojo [estado | bloquear PAQ... | desbloquear PAQ... | web | apk PAQ ARCHIVO] [-s SERIAL]");
+            eprintln!("uso: cerrojo [estado | bloquear PAQ... | desbloquear PAQ... | web | solo APP si|no | apk PAQ ARCHIVO] [-s SERIAL]");
             std::process::exit(2);
         }
     }

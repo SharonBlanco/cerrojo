@@ -70,6 +70,16 @@ button.light:hover { filter: brightness(1.15); }
   background-color: rgba(255,255,255,0.10); color: rgba(244,245,248,0.80); }
 .chip.blocked { background-color: rgba(0,195,227,0.20); color: #9DEBF7; }
 .chip.live { background-color: rgba(255,69,84,0.22); color: #FFB3BA; }
+.seg { margin-top: 5px; }
+.seg button { min-height: 22px; padding: 0 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  background-image: none; box-shadow: none; background-color: rgba(255,255,255,0.05);
+  color: rgba(244,245,248,0.70); border: 1px solid rgba(255,255,255,0.14); }
+.seg button:hover { background-color: rgba(255,255,255,0.10); }
+.seg button:checked { background-color: rgba(0,195,227,0.22); border-color: rgba(0,195,227,0.7); color: #9DEBF7; }
+checkbutton.extra { margin-top: 3px; font-size: 11.5px; color: rgba(230,232,238,0.75); }
+checkbutton.extra check { min-width: 14px; min-height: 14px; border-radius: 4px; background-image: none;
+  background-color: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.22); box-shadow: none; }
+checkbutton.extra check:checked { background-color: #00C3E3; border-color: #00C3E3; color: #0B2A33; }
 switch { border-radius: 999px; background-color: rgba(255,255,255,0.16); border: none; }
 switch:checked { background-color: #00C3E3; }
 switch slider { border-radius: 999px; background-color: #F4F5F8; border: none; box-shadow: none; }
@@ -110,6 +120,8 @@ const WEB_WHY: &str = "Instagram, TikTok, Facebook… volverán a abrir en el na
 
 enum Job {
     Refresh(String),
+    /// Pone las apps como se quieren: con candado o, en modo «solo los
+    /// Shorts», usables y con el vigía.
     Block { serial: String, apps: Vec<App>, auto: bool },
     Unblock { serial: String, app: App },
     /// Poner el filtro web como dice equipos.json.
@@ -122,6 +134,8 @@ enum Msg {
     Busy(String, String),
     Done(String, String),
     Web(String, device::WebState),
+    /// ¿Está encendido el vigía de Shorts y Reels?
+    Guard(String, bool),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -142,6 +156,16 @@ fn app_state(app: &App, st: &HashMap<String, PkgState>) -> AppState {
     }
 }
 
+/// ¿Hay que tocar algo en el celular para que esta app quede como se quiere?
+fn needs_apply(app: &App, st: &HashMap<String, PkgState>, partial: bool) -> bool {
+    let get = |p: &String| st.get(p).copied().unwrap_or(PkgState::Absent);
+    match app.partial.as_ref().filter(|_| partial) {
+        // Lo que se deja usar, libre; lo demás (la versión Lite…), con candado.
+        Some(pp) => app.packages.iter().any(|p| (get(p) == PkgState::Blocked) == pp.packages.contains(p)),
+        None => app_state(app, st) != AppState::Blocked,
+    }
+}
+
 fn worker(jobs: mpsc::Receiver<Job>, tx: mpsc::Sender<Msg>) {
     let refresh = |serial: &str| {
         let apps = catalog::all();
@@ -156,14 +180,17 @@ fn worker(jobs: mpsc::Receiver<Job>, tx: mpsc::Sender<Msg>) {
         }
     };
     let web = |serial: &str, errors: &mut Vec<String>| {
-        let _ = tx.send(Msg::Busy(serial.to_string(), "Bloqueando sus páginas web…".into()));
+        let _ = tx.send(Msg::Busy(serial.to_string(), "Ajustando páginas web y vigía…".into()));
         if let Err(e) = crate::store::sync_web(serial) {
-            errors.push(format!("filtro web: {e:#}"));
+            errors.push(format!("ayudante: {e:#}"));
         }
         // La VPN tarda un instante en levantarse.
         std::thread::sleep(Duration::from_millis(2500));
         if let Ok(w) = device::web_state(serial) {
             let _ = tx.send(Msg::Web(serial.to_string(), w));
+        }
+        if let Ok(g) = device::guard_state(serial) {
+            let _ = tx.send(Msg::Guard(serial.to_string(), g));
         }
     };
     while let Ok(job) = jobs.recv() {
@@ -171,7 +198,10 @@ fn worker(jobs: mpsc::Receiver<Job>, tx: mpsc::Sender<Msg>) {
             Job::Refresh(serial) => {
                 refresh(&serial);
                 if let Ok(w) = device::web_state(&serial) {
-                    let _ = tx.send(Msg::Web(serial, w));
+                    let _ = tx.send(Msg::Web(serial.clone(), w));
+                }
+                if let Ok(g) = device::guard_state(&serial) {
+                    let _ = tx.send(Msg::Guard(serial, g));
                 }
             }
             Job::Web(serial) => {
@@ -181,10 +211,21 @@ fn worker(jobs: mpsc::Receiver<Job>, tx: mpsc::Sender<Msg>) {
             }
             Job::Block { serial, apps, auto } => {
                 let mut errors = Vec::new();
+                let store = Store::load();
                 for app in &apps {
-                    let _ = tx.send(Msg::Busy(serial.clone(), format!("Bloqueando {}…", app.name)));
+                    let partial = app.partial.as_ref().filter(|_| store.is_partial(&serial, app));
+                    let text = match partial {
+                        Some(pp) => format!("Dejando {} sin {}…", app.name, pp.what),
+                        None => format!("Bloqueando {}…", app.name),
+                    };
+                    let _ = tx.send(Msg::Busy(serial.clone(), text));
                     for p in &app.packages {
-                        if let Err(e) = device::block(&serial, p) {
+                        let r = if partial.is_some_and(|pp| pp.packages.contains(p)) {
+                            device::unblock(&serial, p)
+                        } else {
+                            device::block(&serial, p)
+                        };
+                        if let Err(e) = r {
                             errors.push(format!("{p}: {e}"));
                         }
                     }
@@ -244,6 +285,10 @@ struct Row {
     app: App,
     chip: gtk::Label,
     switch: gtk::Switch,
+    /// «Toda la app» / «Solo los Shorts», si la app lo admite.
+    modes: Option<(gtk::ToggleButton, gtk::ToggleButton)>,
+    /// La casilla de la opción extra («Quitar también los directos»).
+    extra: Option<gtk::CheckButton>,
 }
 
 struct Ui {
@@ -281,10 +326,13 @@ struct State {
     checked: HashSet<String>,
     rows: Vec<Row>,
     pending_unblock: Option<App>,
+    /// Se está confirmando pasar una app a «solo los Shorts».
+    pending_partial: Option<App>,
     /// Se está confirmando apagar el filtro web.
     pending_web: bool,
     web: HashMap<String, device::WebState>,
     web_row: Option<(gtk::Label, gtk::Switch)>,
+    guard: HashMap<String, bool>,
     tint: Option<(f64, f64, f64)>,
 }
 
@@ -348,9 +396,11 @@ fn build(app: &gtk::Application) {
         checked: HashSet::new(),
         rows: Vec::new(),
         pending_unblock: None,
+        pending_partial: None,
         pending_web: false,
         web: HashMap::new(),
         web_row: None,
+        guard: HashMap::new(),
         tint: None,
     }));
 
@@ -502,7 +552,11 @@ fn build(app: &gtk::Application) {
             let mut s = state.borrow_mut();
             let Some(serial) = s.current.clone() else { return };
             let st = s.states.get(&serial).cloned().unwrap_or_default();
-            let apps: Vec<App> = catalog::all().into_iter().filter(|a| app_state(a, &st) != AppState::Blocked).collect();
+            // Respeta el modo de cada app (YouTube «solo los Shorts», por ejemplo).
+            let apps: Vec<App> = catalog::all()
+                .into_iter()
+                .filter(|a| !s.store.wants(&serial, &a.name) || needs_apply(a, &st, s.store.is_partial(&serial, a)))
+                .collect();
             for a in catalog::all() {
                 s.store.set(&serial, &a.name, true);
             }
@@ -616,6 +670,7 @@ fn build(app: &gtk::Application) {
         keep.connect_clicked(move |_| {
             let mut s = state.borrow_mut();
             s.pending_unblock = None;
+            s.pending_partial = None;
             s.pending_web = false;
             drop(s);
             ui.confirm.set_visible(false);
@@ -631,6 +686,12 @@ fn build(app: &gtk::Application) {
                 let Some(serial) = s.current.clone() else { return };
                 s.store.set_web(&serial, false);
                 let _ = s.jobs.send(Job::Web(serial));
+                return;
+            }
+            if let (Some(app), Some(serial)) = (s.pending_partial.take(), s.current.clone()) {
+                s.store.set_partial(&serial, &app.name, true);
+                s.store.set(&serial, &app.name, true);
+                let _ = s.jobs.send(Job::Block { serial, apps: vec![app], auto: false });
                 return;
             }
             let (Some(app), Some(serial)) = (s.pending_unblock.take(), s.current.clone()) else { return };
@@ -729,7 +790,7 @@ fn on_msg(s: &mut State, msg: Msg) {
                 }
                 let missing: Vec<App> = apps
                     .iter()
-                    .filter(|a| s.store.wants(&serial, &a.name) && app_state(a, &st) != AppState::Blocked)
+                    .filter(|a| s.store.wants(&serial, &a.name) && needs_apply(a, &st, s.store.is_partial(&serial, a)))
                     .cloned()
                     .collect();
                 // Bloquear también repone el filtro web; si no falta ningún
@@ -749,6 +810,9 @@ fn on_msg(s: &mut State, msg: Msg) {
         }
         Msg::Web(serial, w) => {
             s.web.insert(serial, w);
+        }
+        Msg::Guard(serial, g) => {
+            s.guard.insert(serial, g);
         }
         Msg::Done(serial, text) => {
             if s.current.as_deref() == Some(&serial) {
@@ -827,6 +891,44 @@ fn rebuild_rows(ui: &Rc<Ui>, state: &Rc<RefCell<State>>) {
         hint.add_css_class("row-hint");
         hint.set_xalign(0.0);
         text.append(&hint);
+        let modes = app.partial.as_ref().map(|pp| {
+            let seg = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            seg.add_css_class("seg");
+            let whole = gtk::ToggleButton::with_label("Toda la app");
+            let only = gtk::ToggleButton::with_label(&format!("Solo los {}", pp.what));
+            only.set_group(Some(&whole));
+            whole.set_active(true);
+            for (b, partial) in [(&whole, false), (&only, true)] {
+                let (state, ui, app) = (state.clone(), ui.clone(), app.clone());
+                b.connect_clicked(move |b| {
+                    if b.widget_name() == "sync" {
+                        return;
+                    }
+                    choose_mode(&ui, &state, &app, partial);
+                });
+                seg.append(b);
+            }
+            text.append(&seg);
+            (whole, only)
+        });
+        let extra = app.partial.as_ref().and_then(|pp| pp.extra.clone()).map(|ex| {
+            let check = gtk::CheckButton::with_label(&ex.label);
+            check.add_css_class("extra");
+            check.set_halign(gtk::Align::Start);
+            let state = state.clone();
+            check.connect_toggled(move |c| {
+                if c.widget_name() == "sync" {
+                    return;
+                }
+                let mut s = state.borrow_mut();
+                let Some(serial) = s.current.clone() else { return };
+                s.store.set_extra(&serial, &ex.key, c.is_active());
+                // Solo cambia lo que vigila el vigía: basta con ajustar el ayudante.
+                let _ = s.jobs.send(Job::Web(serial));
+            });
+            text.append(&check);
+            check
+        });
         row.append(&text);
         let chip = gtk::Label::new(None);
         chip.add_css_class("chip");
@@ -859,9 +961,41 @@ fn rebuild_rows(ui: &Rc<Ui>, state: &Rc<RefCell<State>>) {
         }
         row.append(&switch);
         ui.list.append(&row);
-        rows.push(Row { app, chip, switch });
+        rows.push(Row { app, chip, switch, modes, extra });
     }
     state.borrow_mut().rows = rows;
+}
+
+/// Clic en «Toda la app» o «Solo los Shorts». Pasar a toda la app (o elegir
+/// un modo con la app sin bloquear) aprieta, así que va directo; dejar una app
+/// bloqueada en «solo los Shorts» afloja, así que se confirma.
+fn choose_mode(ui: &Rc<Ui>, state: &Rc<RefCell<State>>, app: &App, partial: bool) {
+    let mut s = state.borrow_mut();
+    let Some(serial) = s.current.clone() else { return };
+    let wants = s.store.wants(&serial, &app.name);
+    let current = s.store.is_partial(&serial, app);
+    if wants && current == partial {
+        return;
+    }
+    if wants && partial {
+        let what = app.partial.as_ref().map(|pp| pp.what.clone()).unwrap_or_default();
+        s.pending_partial = Some(app.clone());
+        ui.confirm_text.set_text(&format!("¿Dejar {} abierta, sin {}?", app.name, what));
+        ui.confirm_why.set_text(&format!(
+            "{} se podrá usar (si no está, instálala desde la Play Store). Cerrojo cerrará los {} \
+             en cuanto se abran y tapará su pestaña.",
+            app.name, what
+        ));
+        ui.confirm_go.set_label("Sí, solo sin ellos");
+        ui.confirm.set_visible(true);
+        drop(s);
+        // Mientras se confirma, los botones vuelven a lo que hay.
+        render(ui, state);
+        return;
+    }
+    s.store.set_partial(&serial, &app.name, partial);
+    s.store.set(&serial, &app.name, true);
+    let _ = s.jobs.send(Job::Block { serial, apps: vec![app.clone()], auto: false });
 }
 
 fn set_classes(w: &impl IsA<gtk::Widget>, on: &str, all: &[&str]) {
@@ -943,17 +1077,59 @@ fn render(ui: &Rc<Ui>, state: &Rc<RefCell<State>>) {
     let busy = s.busy.clone();
     let mut blocked = 0;
     let mut live = 0;
+    let guard = s.guard.get(&device.serial).copied();
     for row in &s.rows {
-        let (text, class, on) = match st.as_ref().map(|m| app_state(&row.app, m)) {
-            Some(AppState::Blocked) => ("Bloqueada", "blocked", true),
-            Some(AppState::Live) => ("Instalada", "live", false),
-            Some(AppState::Free) => ("Sin bloquear", "", false),
-            None => ("…", "", false),
+        let partial = s.store.is_partial(&device.serial, &row.app);
+        let guarded = partial && s.store.wants(&device.serial, &row.app.name);
+        let what = row.app.partial.as_ref().map(|pp| pp.what.as_str()).unwrap_or_default();
+        let sin = format!("Sin {what}");
+        let (text, class, on) = if guarded && st.is_some() {
+            // Modo «solo los Shorts»: lo que cuenta es el vigía.
+            match guard {
+                Some(true) => {
+                    blocked += 1;
+                    (sin.as_str(), "blocked", true)
+                }
+                Some(false) => {
+                    live += 1;
+                    ("Vigía quitado", "live", true)
+                }
+                None => ("…", "", true),
+            }
+        } else {
+            match st.as_ref().map(|m| app_state(&row.app, m)) {
+                Some(AppState::Blocked) => {
+                    blocked += 1;
+                    ("Bloqueada", "blocked", true)
+                }
+                Some(AppState::Live) => {
+                    live += 1;
+                    ("Instalada", "live", false)
+                }
+                Some(AppState::Free) => ("Sin bloquear", "", false),
+                None => ("…", "", false),
+            }
         };
-        match st.as_ref().map(|m| app_state(&row.app, m)) {
-            Some(AppState::Blocked) => blocked += 1,
-            Some(AppState::Live) => live += 1,
-            _ => {}
+        if let Some((whole, only)) = &row.modes {
+            let b = if partial { only } else { whole };
+            if !b.is_active() {
+                b.set_widget_name("sync");
+                b.set_active(true);
+                b.set_widget_name("");
+            }
+            whole.set_sensitive(busy.is_none() && st.is_some());
+            only.set_sensitive(busy.is_none() && st.is_some());
+        }
+        if let (Some(check), Some(ex)) = (&row.extra, row.app.partial.as_ref().and_then(|pp| pp.extra.as_ref())) {
+            // Solo tiene sentido en «Solo los Shorts».
+            check.set_visible(partial);
+            let on = s.store.extra_on(&device.serial, &ex.key);
+            if check.is_active() != on {
+                check.set_widget_name("sync");
+                check.set_active(on);
+                check.set_widget_name("");
+            }
+            check.set_sensitive(busy.is_none() && st.is_some());
         }
         row.chip.set_text(text);
         set_classes(&row.chip, class, &["blocked", "live"]);

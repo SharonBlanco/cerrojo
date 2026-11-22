@@ -361,7 +361,8 @@ pub fn web_on(serial: &str, domains: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Quita el filtro del todo.
+/// Apaga el filtro web (la app se queda si el vigía la necesita; ver
+/// helper_remove).
 pub fn web_off(serial: &str) -> Result<()> {
     let p = apk::FILTER_PKG;
     if !shell(serial, &format!("pm path {p}"))?.contains("package:") {
@@ -372,8 +373,99 @@ pub fn web_off(serial: &str) -> Result<()> {
         &format!(
             "am start -n {p}/.Orden --ez apagar true; \
              [ \"$(settings get secure always_on_vpn_app)\" = {p} ] && settings delete secure always_on_vpn_app; \
-             settings put global private_dns_mode opportunistic; cmd deviceidle whitelist -{p} >/dev/null; \
-             sleep 1; pm uninstall {p}"
+             settings put global private_dns_mode opportunistic; cmd deviceidle whitelist -{p} >/dev/null"
+        ),
+    )?;
+    Ok(())
+}
+
+/// Desinstala el ayudante (cuando ya no hace falta ni el filtro ni el vigía).
+pub fn helper_remove(serial: &str) -> Result<()> {
+    let p = apk::FILTER_PKG;
+    shell(serial, &format!("pm path {p} | grep -q package: && sleep 1 && pm uninstall {p}"))?;
+    Ok(())
+}
+
+// ---- Vigía de Shorts y Reels ----
+//
+// Un servicio de accesibilidad del mismo ayudante (android/…/Vigia.java) que
+// cierra el reproductor de Shorts/Reels y tapa su pestaña. Se enciende sin
+// tocar el celular escribiendo enabled_accessibility_services (el shell de adb
+// puede); si lo apagas en Ajustes › Accesibilidad, Cerrojo lo vuelve a poner
+// al conectar. ACCESS_RESTRICTED_SETTINGS evita el aviso de "ajuste
+// restringido" de Android 13+ con apps que no vienen de una tienda.
+
+const GUARD: &str = "dev.cerrojo.filtro/.Vigia";
+/// La app de YouTube, a la que se le quita el picture-in-picture con el vigía.
+const YT: &str = "com.google.android.youtube";
+
+/// ¿Está el ayudante instalado y al día?
+fn helper_installed(serial: &str) -> Result<bool> {
+    let p = apk::FILTER_PKG;
+    let out = shell(serial, &format!("pm path {p}; echo @@; dumpsys package {p} | grep -m1 versionCode="))?;
+    let (path, version) = out.split_once("@@").unwrap_or((&out, ""));
+    let version: u32 = version
+        .split("versionCode=")
+        .nth(1)
+        .and_then(|v| v.split_whitespace().next())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    Ok(path.contains("package:") && version >= apk::FILTER_VERSION)
+}
+
+/// ¿Está el vigía encendido?
+pub fn guard_state(serial: &str) -> Result<bool> {
+    let p = apk::FILTER_PKG;
+    let on = shell(serial, "settings get secure enabled_accessibility_services")?.contains(&format!("{p}/"));
+    Ok(on && helper_installed(serial)?)
+}
+
+/// Enciende el vigía para estas apps ("youtube", "instagram").
+pub fn guard_on(serial: &str, keys: &[String]) -> Result<()> {
+    let (p, yt) = (apk::FILTER_PKG, YT);
+    if !helper_installed(serial)? {
+        install_filter(serial)?;
+    }
+    let keys: Vec<&str> =
+        keys.iter().map(String::as_str).filter(|k| k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')).collect();
+    let out = shell(
+        serial,
+        &format!(
+            "appops set {p} ACCESS_RESTRICTED_SETTINGS allow 2>/dev/null; \
+             am start -n {p}/.Orden --es vigia '{keys}' >/dev/null; \
+             s=$(settings get secure enabled_accessibility_services); \
+             case \"$s\" in *{p}/*) ;; ''|null) settings put secure enabled_accessibility_services {GUARD} ;; \
+             *) settings put secure enabled_accessibility_services \"$s:{GUARD}\" ;; esac; \
+             settings put secure accessibility_enabled 1; \
+             appops set {yt} PICTURE_IN_PICTURE {pip}",
+            keys = keys.join(" "),
+            // Con YouTube vigilada, sin ventana flotante: un Short en
+            // picture-in-picture quedaría fuera del alcance del vigía.
+            pip = if keys.contains(&"youtube") { "ignore" } else { "default" },
+        ),
+    )?;
+    if out.contains("Exception") {
+        bail!("no se pudo encender el vigía: {}", out.trim());
+    }
+    Ok(())
+}
+
+/// Apaga el vigía (sin tocar otros servicios de accesibilidad).
+pub fn guard_off(serial: &str) -> Result<()> {
+    let (p, yt) = (apk::FILTER_PKG, YT);
+    if !shell(serial, &format!("pm path {p}"))?.contains("package:") {
+        return Ok(());
+    }
+    shell(
+        serial,
+        &format!(
+            "am start -n {p}/.Orden --es vigia '' >/dev/null; \
+             s=$(settings get secure enabled_accessibility_services); \
+             case \"$s\" in *{p}/*) \
+               n=$(echo \"$s\" | sed -e 's#{p}/[^:]*##g' -e 's/::*/:/g' -e 's/^://' -e 's/:$//'); \
+               if [ -z \"$n\" ]; then settings delete secure enabled_accessibility_services; \
+               else settings put secure enabled_accessibility_services \"$n\"; fi ;; esac; \
+             appops set {yt} PICTURE_IN_PICTURE default"
         ),
     )?;
     Ok(())

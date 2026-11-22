@@ -16,6 +16,34 @@ pub struct App {
     /// subdominios; con "!" delante, una excepción.
     #[serde(default)]
     pub domains: Vec<String>,
+    /// Si se puede dejar la app y quitarle solo los videos cortos.
+    #[serde(default)]
+    pub partial: Option<Partial>,
+}
+
+/// El modo «solo los Shorts»: la app se deja usar y el vigía del celular
+/// (android/…/Vigia.java) cierra el reproductor de videos cortos y tapa su
+/// pestaña. Sus páginas web no se bloquean: la app las necesita.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Partial {
+    /// Lo que se quita, para los textos: "Shorts", "Reels".
+    pub what: String,
+    /// El nombre que entiende el vigía.
+    pub key: String,
+    /// Los paquetes que se dejan usar; los demás de la app (Lite…) se bloquean.
+    pub packages: Vec<String>,
+    /// Algo más que puede quitar el vigía en este modo (los directos de YouTube).
+    #[serde(default)]
+    pub extra: Option<Extra>,
+}
+
+/// Una opción del modo «solo los Shorts», con su interruptor en la ventana.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Extra {
+    /// Lo que entiende el vigía ("youtube-directos").
+    pub key: String,
+    /// El texto de la casilla.
+    pub label: String,
 }
 
 fn app(name: &str, hint: &str, packages: &[&str]) -> App {
@@ -24,12 +52,30 @@ fn app(name: &str, hint: &str, packages: &[&str]) -> App {
         hint: hint.into(),
         packages: packages.iter().map(|p| p.to_string()).collect(),
         domains: Vec::new(),
+        partial: None,
     }
 }
 
 impl App {
     fn web(mut self, domains: &[&str]) -> App {
         self.domains = domains.iter().map(|d| d.to_string()).collect();
+        self
+    }
+
+    fn partial(mut self, what: &str, key: &str, packages: &[&str]) -> App {
+        self.partial = Some(Partial {
+            what: what.into(),
+            key: key.into(),
+            packages: packages.iter().map(|p| p.to_string()).collect(),
+            extra: None,
+        });
+        self
+    }
+
+    fn extra(mut self, key: &str, label: &str) -> App {
+        if let Some(p) = self.partial.as_mut() {
+            p.extra = Some(Extra { key: key.into(), label: label.into() });
+        }
         self
     }
 }
@@ -44,7 +90,9 @@ pub const BYPASS: &[&str] = &[
 
 pub fn builtin() -> Vec<App> {
     vec![
-        app("YouTube", "Shorts", &["com.google.android.youtube"]),
+        app("YouTube", "Shorts", &["com.google.android.youtube"]).partial("Shorts", "youtube", &["com.google.android.youtube"])
+            // Con «No me interesa» en cada directo del feed.
+            .extra("youtube-directos", "Quitar también los directos"),
         app("YouTube Music", "Samples", &["com.google.android.apps.youtube.music"]),
         app(
             "YouTube parcheado",
@@ -62,7 +110,8 @@ pub fn builtin() -> Vec<App> {
         app("TikTok", "Para ti", &["com.zhiliaoapp.musically", "com.zhiliaoapp.musically.go", "com.ss.android.ugc.trill"])
             .web(&["tiktok.com", "tiktokv.com", "tiktokcdn.com", "tiktokcdn-us.com", "tiktokw.us", "musical.ly"]),
         app("Instagram", "Reels", &["com.instagram.android", "com.instagram.lite"])
-            .web(&["instagram.com", "cdninstagram.com", "instagr.am", "ig.me"]),
+            .web(&["instagram.com", "cdninstagram.com", "instagr.am", "ig.me"])
+            .partial("Reels", "instagram", &["com.instagram.android"]),
         app("Threads", "Videos en el feed", &["com.instagram.barcelona"]).web(&["threads.net", "threads.com"]),
         // graph.facebook.com se deja: lo usan WhatsApp Business y los
         // inicios de sesión con Facebook de otras apps.

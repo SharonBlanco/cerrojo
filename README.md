@@ -37,6 +37,10 @@ la Play Store, ni desde otra tienda, ni con un APK descargado. La llave se queda
 - 🌐 **También sus páginas web.** Al bloquear Instagram, TikTok, Facebook, Threads… sus sitios dejan de abrir en
   cualquier navegador del celular. WhatsApp, LinkedIn y YouTube web siguen funcionando. Se apaga y se enciende con
   su propio interruptor, *Páginas web*.
+- ✂️ **O solo los Shorts y los Reels.** YouTube e Instagram tienen un segundo modo, *Solo los Shorts* / *Solo los
+  Reels*: la app sigue funcionando, pero el reproductor de videos cortos se cierra en cuanto aparece y su pestaña
+  de abajo queda tapada con un 🧠. Los bloques de Shorts del feed se quitan con «No me interesa», y con la casilla
+  *Quitar también los directos*, los directos también.
 - ➕ **Cualquier otra app** se añade escribiendo su nombre de paquete.
 - 📱 **Varios equipos**: el celular, la tablet, el de tu hermano… cada uno recuerda su lista.
 - 🪶 **Nada que hacer en el celular.** Todo va por `adb`, la herramienta oficial de Android: sin cuentas, sin
@@ -129,6 +133,13 @@ VPN local que **solo ve el DNS**. Cuando el navegador pregunta por `instagram.co
 de preguntas las reenvía al DNS de tu red, y el tráfico normal no pasa por ella. adb le da el permiso de VPN
 (`appops`) sin el diálogo de confirmación y la deja como VPN siempre activa, así que vuelve sola al reiniciar.
 
+**Solo los Shorts / solo los Reels** lo hace el *vigía*, un servicio de accesibilidad de esa misma mini app. Mira la
+pantalla de YouTube e Instagram y nada más: si se abre el reproductor de Shorts o de Reels, pulsa *Atrás*; si ve su
+pestaña en la barra de abajo, le pone encima un recuadro con un 🧠 que no se deja tocar. adb lo enciende
+escribiendo `enabled_accessibility_services`, sin pasar por Ajustes. Si lo apagas en *Ajustes › Accesibilidad*,
+Cerrojo lo vuelve a encender al conectar el celular. En este modo las páginas web de la app no se bloquean,
+porque la app las necesita.
+
 Los candados y el filtro se generan dentro de Cerrojo, sin necesitar el SDK de Android: el manifiesto, el zip y la firma
 APK v2 están hechos en Rust (`src/apk.rs`).
 
@@ -145,6 +156,11 @@ algo imposible de saltar, ninguna app sin root lo es; Cerrojo busca que sea inc�
 cifrados que servirían para saltárselo). Se puede quitar desde *Ajustes › VPN* o desinstalándolo, pero Cerrojo lo
 vuelve a poner al conectar el celular. YouTube web se deja a propósito; los Shorts dentro de youtube.com no se
 pueden separar por DNS.
+
+**¿El modo «solo los Shorts» es igual de fuerte?** No. Se puede apagar en *Ajustes › Accesibilidad* (hasta que
+vuelvas a conectar el celular), y si YouTube o Instagram cambian su diseño por dentro puede dejar de reconocer los
+Shorts hasta que se actualice Cerrojo. Algunos celulares avisan de vez en cuando de que un servicio "puede ver
+la pantalla": es el vigía, que no guarda ni envía nada. Si los Shorts te pueden, usa *Toda la app*.
 
 **¿Hace más lento el internet?** Solo pasa por el filtro la pregunta de "¿qué IP tiene este sitio?", no las
 descargas ni los videos. En Samsung, la primera vez que se instala puede salir Play Protect: toca *Instalar de
@@ -163,6 +179,8 @@ cerrojo bloquear com.zhiliaoapp.musically
 cerrojo desbloquear com.pinterest
 cerrojo web                         # pone o quita el filtro web según lo bloqueado
 cerrojo web apagar                  # lo desactiva en este equipo (encender lo vuelve a poner)
+cerrojo solo youtube si             # YouTube usable, sin Shorts (no: bloquearla entera)
+cerrojo solo instagram si           # Instagram usable, sin Reels
 cerrojo bloquear PAQUETE -s SERIAL  # con varios equipos conectados
 ```
 
@@ -174,8 +192,8 @@ cargo build --release
 ./target/release/cerrojo
 ```
 
-Rust estable y GTK 4.6 o más nuevo. El filtro web ya va compilado en `assets/filtro/`; solo si cambias su Java
-hace falta el SDK de Android (`android/build.sh`). Las versiones se publican solas con GitHub Actions al subir una etiqueta `vX.Y.Z`.
+Rust estable y GTK 4.6 o más nuevo. El ayudante del celular (filtro web y vigía) va compilado en `assets/filtro/`;
+solo si cambias su Java o sus recursos hace falta el SDK de Android (`android/build.sh`). Las versiones se publican solas con GitHub Actions al subir una etiqueta `vX.Y.Z`.
 
 ## Licencia
 
