@@ -316,6 +316,7 @@ public class Vigia extends AccessibilityService {
         if (e.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && e.getClassName() != null) {
             String pantallaNueva = e.getClassName().toString();
             Regla ra = deVigilada ? m.get(ep.toString()) : null;
+            if (ra != null && !pantallaNueva.startsWith("android.")) actividadActual = pantallaNueva;
             boolean prohibida = ra != null && esProhibida(ra, pantallaNueva);
             if (prohibida) {
                 // Los Estados de WhatsApp: tapados ya y fuera.
@@ -424,7 +425,7 @@ public class Vigia extends AccessibilityService {
             pantallaActual = pantalla;
             fijas = pequenos;
             if (r.inicio.length > 0) revisarInicio(root, r, pantalla, true);
-            if (bloqueando == null && reproductorDentro(root, r, ahora)) {
+            if (bloqueando == null && !esVisor(actividadActual) && reproductorDentro(root, r, ahora)) {
                 bloqueoPorDentro = true;
                 empezarBloqueo(r, ahora);
                 return;
@@ -987,6 +988,19 @@ public class Vigia extends AccessibilityService {
         return c.contains("status") && contiene(c, REPRODUCTOR);
     }
 
+    /** La última pantalla (Activity) de una app vigilada que se abrió. */
+    private String actividadActual = "";
+
+    /**
+     * El visor de fotos y videos de los chats (MediaViewActivity y parecidos):
+     * ahí los videos se dejan ver aunque sus piezas se llamen «playback…».
+     */
+    private static boolean esVisor(String clase) {
+        String c = clase == null ? "" : clase.toLowerCase(Locale.ROOT);
+        return !c.contains("status") && (c.contains("mediaview") || c.contains("videoplay")
+                || c.contains("gallery") || c.contains("mediaalbum") || c.contains("conversation"));
+    }
+
     private long reproductorMirado;
     /** El bloqueo empezó por el reproductor dentro de otra pantalla (no por su nombre). */
     private boolean bloqueoPorDentro;
@@ -1009,7 +1023,7 @@ public class Vigia extends AccessibilityService {
             if (vid == null || !vid.startsWith(pre)) continue;
             String id = vid.substring(pre.length()).toLowerCase(Locale.ROOT);
             if (id.contains("status") && contiene(id, REPRODUCTOR)) return true;
-            if (id.startsWith("playback") || id.contains("status_view_pager") || id.contains("statuses_view_pager")) return true;
+            if (id.contains("status_view_pager") || id.contains("statuses_view_pager")) return true;
         }
         return false;
     }
