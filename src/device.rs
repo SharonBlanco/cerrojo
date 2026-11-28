@@ -396,7 +396,7 @@ pub fn helper_remove(serial: &str) -> Result<()> {
 // restringido" de Android 13+ con apps que no vienen de una tienda.
 
 const GUARD: &str = "dev.cerrojo.filtro/.Vigia";
-/// La app de YouTube, a la que se le quita el picture-in-picture con el vigía.
+/// La app de YouTube (se le devuelve el picture-in-picture que quitaban versiones anteriores).
 const YT: &str = "com.google.android.youtube";
 
 /// ¿Está el ayudante instalado y al día?
@@ -437,11 +437,11 @@ pub fn guard_on(serial: &str, keys: &[String]) -> Result<()> {
              case \"$s\" in *{p}/*) ;; ''|null) settings put secure enabled_accessibility_services {GUARD} ;; \
              *) settings put secure enabled_accessibility_services \"$s:{GUARD}\" ;; esac; \
              settings put secure accessibility_enabled 1; \
-             appops set {yt} PICTURE_IN_PICTURE {pip}",
+             appops set {yt} PICTURE_IN_PICTURE default",
             keys = keys.join(" "),
-            // Con YouTube vigilada, sin ventana flotante: un Short en
-            // picture-in-picture quedaría fuera del alcance del vigía.
-            pip = if keys.contains(&"youtube") { "ignore" } else { "default" },
+            // La ventana flotante se deja: YouTube solo la usa con videos
+            // normales (los Shorts no pasan a picture-in-picture). Antes se
+            // quitaba, y con ella la miniatura de los videos al salir.
         ),
     )?;
     if out.contains("Exception") {

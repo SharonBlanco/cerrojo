@@ -84,6 +84,11 @@ public class Vigia extends AccessibilityService {
          */
         String[] pagina = {};
         String[] volver = {};
+        /**
+         * ¿Se tapa la pestaña con el cerebro? Si no (YouTube, WhatsApp), la
+         * pestaña se ve normal y al tocarla se tapa la pantalla entera y se sale.
+         */
+        boolean tapaPestana = true;
         /** El botón de cerrar del reproductor minimizado (trozos de su descripción). */
         final String[] cerrar;
         /** Título de los bloques de videos cortos del feed (null: no se descartan). */
@@ -141,6 +146,11 @@ public class Vigia extends AccessibilityService {
             return this;
         }
 
+        Regla sinTapa() {
+            tapaPestana = false;
+            return this;
+        }
+
         Regla pagina(String[] titulos, String... volverA) {
             pagina = titulos;
             volver = volverA;
@@ -162,7 +172,7 @@ public class Vigia extends AccessibilityService {
             new String[]{"no me interesa", "not interested", "mostrar menos shorts", "show fewer shorts",
                 "menos shorts", "fewer shorts"},
             new String[]{"en vivo", "en directo", "live", "directo"},
-            0xFFFFFFFF, 0xFF0F0F0F).minimiza(),
+            0xFFFFFFFF, 0xFF0F0F0F).minimiza().sinTapa(),
         new Regla("instagram", "com.instagram.android", "Reels",
             new String[]{"clips_viewer_view_pager"},
             new String[]{"tab_bar"},
@@ -181,7 +191,7 @@ public class Vigia extends AccessibilityService {
             0xFFFFFFFF, 0xFF0B141A)
             .tambien("updates", "estados", "status").actividades("StatusPlayback", "status.playback")
             .aviso("Estados bloqueados")
-            .pagina(new String[]{"estados", "status"}, "chats"),
+            .pagina(new String[]{"estados", "status"}, "chats").sinTapa(),
         new Regla("whatsapp", "com.whatsapp.w4b", "Estados",
             new String[]{}, new String[]{}, new String[]{},
             "novedades",
@@ -190,7 +200,7 @@ public class Vigia extends AccessibilityService {
             0xFFFFFFFF, 0xFF0B141A)
             .tambien("updates", "estados", "status").actividades("StatusPlayback", "status.playback")
             .aviso("Estados bloqueados")
-            .pagina(new String[]{"estados", "status"}, "chats"),
+            .pagina(new String[]{"estados", "status"}, "chats").sinTapa(),
         // LinkedIn: el feed de Inicio se tapa entero (buscador, mensajes y las
         // demás pestañas quedan libres) y la pestaña «Video» también.
         new Regla("linkedin", "com.linkedin.android", "Videos",
@@ -310,7 +320,7 @@ public class Vigia extends AccessibilityService {
         CharSequence ep = e.getPackageName();
         boolean deVigilada = ep != null && m.containsKey(ep.toString());
         // Lo de otras apps solo importa para quitar las tapas al salir.
-        if (!deVigilada && puestas.isEmpty() && tapaPestana == null && tapaTotal == null && tapaPagina == null
+        if (!deVigilada && puestas.isEmpty() && tapaPestana == null && tapaTotal == null && tapaGuardia == null && tapaPagina == null
                 && capaFeed.v == null && capaInicio.v == null) return;
         long ahora = SystemClock.uptimeMillis();
         if (e.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && e.getClassName() != null) {
@@ -340,6 +350,10 @@ public class Vigia extends AccessibilityService {
         if (deVigilada && (e.getEventType() == AccessibilityEvent.TYPE_VIEW_CLICKED
                 || e.getEventType() == AccessibilityEvent.TYPE_VIEW_SELECTED)) {
             Regla rc = m.get(ep.toString());
+            if (!rc.tapaPestana && esPestana(e, rc)) {
+                // La pestaña prohibida: la pantalla tapada ya, y fuera.
+                empezarGuardia(rc, ahora);
+            }
             if (rc.inicio.length > 0 && pantallaActual != null) {
                 // Estos avisos llegan al momento (no van con retraso como los demás).
                 if (esInicio(e, rc)) {
@@ -413,6 +427,11 @@ public class Vigia extends AccessibilityService {
             List<Rect> pequenos = new ArrayList<>();
             boolean grande = reproductor(root, r, pantalla, pequenos);
             if (grande) {
+                if (!r.tapaPestana) {
+                    // Tapado ya, antes de nada: que no se vea ni un momento.
+                    empezarGuardia(r, ahora);
+                    prohibidoVisto = ahora;
+                }
                 salir(r, ahora);
             } else if (!pequenos.isEmpty() || ahora < salirHasta) {
                 cerrarMinimizado(root, r, pantalla, pequenos, ahora);
@@ -430,7 +449,7 @@ public class Vigia extends AccessibilityService {
                 empezarBloqueo(r, ahora);
                 return;
             }
-            nodoPestana = pestana(root, barra, r, pantalla);
+            nodoPestana = r.tapaPestana ? pestana(root, barra, r, pantalla) : null;
             if (r.pagina.length > 0) {
                 if (nodoPagina == null || !nodoPagina.refresh()) nodoPagina = buscarPagina(root, r, pantalla, ahora);
                 mostrarPagina(root, r);
@@ -668,7 +687,8 @@ public class Vigia extends AccessibilityService {
             // refresh() le pregunta a la app dónde está ahora; si la pestaña ya
             // no existe (YouTube rehízo la barra), se busca de nuevo.
             AccessibilityNodeInfo n = nodoPestana;
-            if (n == null || !n.refresh()) nodoPestana = buscarPestana();
+            if (!regla.tapaPestana) nodoPestana = null;
+            else if (n == null || !n.refresh()) nodoPestana = buscarPestana();
             mostrar();
             if (regla.inicio.length > 0 && pantallaActual != null) {
                 // Cada fotograma: ¿se llegó a Inicio sin tocar el botón (con Atrás)?
@@ -1087,6 +1107,11 @@ public class Vigia extends AccessibilityService {
     /** Toda la pantalla tapada: no se llega a ver nada mientras se cierra. */
     private void ponerTapaTotal(Regla r) {
         if (tapaTotal != null) return;
+        tapaTotal = tapaEntera(r);
+    }
+
+    /** Una tapa de pantalla entera, ya puesta (null si no se pudo). */
+    private TextView tapaEntera(Regla r) {
         TextView v = nuevaTapa(fondo(r));
         v.setText("\uD83E\uDDE0\n" + (r.aviso.isEmpty() ? r.nombre + " bloqueados" : r.aviso));
         v.setTextSize(20);
@@ -1103,8 +1128,83 @@ public class Vigia extends AccessibilityService {
         }
         try {
             ((WindowManager) getSystemService(WINDOW_SERVICE)).addView(v, lp);
-            tapaTotal = v;
+            return v;
         } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    // ---- Guardia: se tocó la pestaña prohibida (Shorts, Novedades) ----
+    //
+    // En vez de perseguir la pestaña con una tapa (la barra se mueve y la tapa
+    // siempre llega tarde), al tocarla se tapa la pantalla entera en el acto.
+    // Lo de siempre la cierra por debajo (Atrás en YouTube, «Chats» en
+    // WhatsApp) y la tapa se quita cuando ya no queda nada prohibido.
+
+    private static final long GUARDIA_MAX = 2500;
+    private TextView tapaGuardia;
+    private Regla guardia;
+    private long guardiaDesde, prohibidoVisto;
+
+    /** ¿El toque fue en la pestaña prohibida de la barra de abajo? */
+    private boolean esPestana(AccessibilityEvent e, Regla r) {
+        boolean texto = igualAlguno(e.getContentDescription(), r.textos);
+        for (CharSequence t : e.getText()) texto |= igualAlguno(t, r.textos);
+        AccessibilityNodeInfo src = e.getSource();
+        if (src != null) {
+            texto |= igualAlguno(src.getText(), r.textos) || igualAlguno(src.getContentDescription(), r.textos);
+        }
+        if (!texto) return false;
+        // Solo abajo (o a la izquierda en tablet): un «Shorts» de la búsqueda no.
+        Rect p = pantallaActual;
+        if (src == null || p == null) return src == null;
+        Rect b = limites(src);
+        return b.isEmpty() || enBorde(b, p);
+    }
+
+    private void empezarGuardia(Regla r, long ahora) {
+        if (guardia == null) {
+            guardiaDesde = ahora;
+            prohibidoVisto = 0;
+            manejador.postDelayed(vigilarGuardia, 60);
+        }
+        guardia = r;
+        if (tapaGuardia == null) tapaGuardia = tapaEntera(r);
+        seguir(ahora);
+    }
+
+    private final Runnable vigilarGuardia = new Runnable() {
+        @Override
+        public void run() {
+            Regla r = guardia;
+            if (r == null) return;
+            long ahora = SystemClock.uptimeMillis();
+            if (prohibidoVisto != 0) {
+                // Ya apareció y se está cerrando: fuera la tapa cuando lleve un
+                // rato sin verse.
+                if (ahora - prohibidoVisto > 300) {
+                    terminarGuardia();
+                    return;
+                }
+            } else if (ahora - guardiaDesde > GUARDIA_MAX) {
+                // Se tocó la pestaña pero no apareció nada prohibido: fuera la
+                // tapa (si aparece después, se vuelve a tapar al verlo).
+                terminarGuardia();
+                return;
+            }
+            manejador.postDelayed(this, 60);
+        }
+    };
+
+    private void terminarGuardia() {
+        guardia = null;
+        manejador.removeCallbacks(vigilarGuardia);
+        if (tapaGuardia != null) {
+            try {
+                ((WindowManager) getSystemService(WINDOW_SERVICE)).removeView(tapaGuardia);
+            } catch (RuntimeException ignored) {
+            }
+            tapaGuardia = null;
         }
     }
 
@@ -1175,6 +1275,7 @@ public class Vigia extends AccessibilityService {
             return;
         }
         ponerTapaPagina(c, r);
+        prohibidoVisto = ahora;
         seguirHasta = Math.max(seguirHasta, ahora + 300);
         // Ya quieta y casi entera: de vuelta a Chats.
         if (!moviendose && c.width() * 10 >= p.width() * 8 && ahora - ultimoVolver > 700) {
@@ -1512,6 +1613,7 @@ public class Vigia extends AccessibilityService {
         capaInicio.quitar();
         nodoInicio = null;
         terminarBloqueo();
+        terminarGuardia();
         nodoPagina = null;
         paginaAntes = null;
         ponerTapaPagina(null, null);
